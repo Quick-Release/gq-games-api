@@ -35,3 +35,20 @@
 - Deployments must provide any required corresponding-source offer for the
   actual network-served version. See `docs/business-model.md`; no paid service
   exists yet.
+
+## Agent skills
+
+### Issue tracker
+
+Use GitHub Issues in `Quick-Release/gq-games-api`. Before ticket operations,
+read `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Use the five default triage roles. Before triage or label changes, read
+`docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context layout: root `GLOSSARY.md` and `docs/adr/`. Before exploring
+domain concepts or decisions, read `docs/agents/domain.md`.
