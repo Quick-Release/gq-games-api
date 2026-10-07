@@ -2,13 +2,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // See LICENSE in the repository root.
 
-import { cloudflare } from '@cloudflare/vite-plugin';
 import { defineConfig } from 'vite-plus';
 
-export default defineConfig(({ mode }) => ({
-  // Unit tests exercise Hono directly; dev/build use the real Workers runtime.
-  plugins: mode === 'test' ? [] : cloudflare(),
-  server: { port: 8787 },
+// Vite+ owns quality tooling; Alchemy owns Worker builds and local workerd.
+export default defineConfig({
   fmt: {
     singleQuote: true,
     printWidth: 80,
@@ -28,4 +25,4 @@ export default defineConfig(({ mode }) => ({
     include: ['tests/**/*.test.ts'],
     watch: false,
   },
-}));
+});

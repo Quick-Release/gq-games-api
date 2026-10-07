@@ -1,6 +1,8 @@
 overrides:
   vite@*: npm:@voidzero-dev/vite-plus-core@1.1.0
   vitest@*: 5.0.3
+  # Alchemy's bundled workerd predates our Worker's compatibility date.
+  workerd: 1.20261006.1
 
 # Vite+ reports its own version rather than the bundled Vite version.
 peerDependencyRules:

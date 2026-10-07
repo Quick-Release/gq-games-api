@@ -12,11 +12,12 @@ is the planned ingestion system; no crawler integration exists yet.
 
 - **Cloudflare Workers**: API runtime. Evaluate D1, R2, Queues, Workflows, and
   caching against actual requirements before provisioning them.
-- **Alchemy**: TypeScript infrastructure and eventual deployments.
+- **Alchemy**: TypeScript infrastructure, local workerd development, Worker
+  builds, and eventual deployments.
 - **Effect**: application services, typed failures, schemas, and resource
   lifecycles. Hono remains the HTTP boundary.
 - **Hono**: routing and HTTP responses.
-- **Vite+**: development, checks, tests, builds, formatting, linting, and tasks.
+- **Vite+**: checks, tests, formatting, linting, and task running.
 - **gq-crawl**: private upstream ingestion research/application. Publish only
   reviewed, licensed, normalized game records—not raw crawls or internal data.
 
@@ -51,17 +52,21 @@ routes return JSON 404s; unexpected failures return a generic JSON 500.
 pnpm format       # Oxfmt
 pnpm lint         # Oxlint + type-aware checks
 pnpm check        # formatting + lint + TypeScript checks
-pnpm test         # bundled Vitest; five HTTP boundary tests
-pnpm build        # Vite/Rolldown + Cloudflare Workers build
-pnpm preview      # serve the built Worker locally
+pnpm test         # bundled Vitest; HTTP boundary + tooling tests
+pnpm build        # offline Alchemy/Rolldown Worker build
+pnpm preview      # Alchemy/workerd; stop dev first (same port)
 ```
 
-With a global Vite+ CLI, the equivalents are `vp install`, `vp dev`, `vp check`,
-`vp lint`, `vp fmt`, `vp test`, `vp build`, and `vp preview`. Use
-`vp run <task>` for project scripts such as `vp run plan` and `vp run deploy`.
-Vite+ also supplies `vp pack` (tsdown), dependency/runtime management, caching,
-and staged-file tools; no library packaging or hooks are configured because this
-is an API, not a library. All tool-specific settings live in `vite.config.ts`.
+With a global Vite+ CLI, use `vp install`, `vp check`, `vp lint`, `vp fmt`, and
+`vp test`. Use `vp run dev`, `vp run build`, and `vp run preview` for the
+Alchemy-backed Worker tooling, not bare `vp dev/build/preview`. Project scripts
+also include `vp run plan` and `vp run deploy`. Vite+ supplies `vp pack`
+(tsdown), dependency/runtime management, caching, and staged-file tools; no
+library packaging or hooks are configured because this is an API, not a library.
+Quality-tool settings live in `vite.config.ts`; **all Worker configuration lives
+in `alchemy.run.ts`**, with no Wrangler file. Dev and preview use reserved local
+stages and require no cloud credentials for this scaffold; review new resources
+before assuming they can be emulated locally.
 
 CI runs checks, lint, tests, and a Worker build. It does **not** deploy.
 
