@@ -15,8 +15,12 @@
   ingest or correct records?
 - Which Cloudflare account, domains, environments, secrets, and ownership model
   will be used?
-- Which license should apply to this repository? Data licensing is a separate
-  decision from code licensing.
+- Which data licenses and redistribution rights support the hosted service?
+  Server code is AGPL-3.0-only; data licensing is a separate decision.
+- What paid managed-service tiers, quotas, freshness guarantees, and support are
+  viable? Commercial self-hosting remains permitted under AGPL.
+- How will deployed versions provide corresponding source, and what contributor
+  rights are needed for any future alternative commercial code license?
 
 ## First experiments
 

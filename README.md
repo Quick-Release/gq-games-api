@@ -22,7 +22,9 @@ is the planned ingestion system; no crawler integration exists yet.
 
 See [architecture](docs/research/architecture.md), the
 [research backlog](docs/research/backlog.md), and
-[development/deployment notes](docs/development.md).
+[development/deployment notes](docs/development.md). The planned
+[business model](docs/business-model.md) is an open-source server with a paid
+managed API, not a personal-use-only license.
 
 ## Getting started
 
@@ -90,5 +92,24 @@ not change GitHub visibility. `gq-crawl` remains private. Do not copy its
 research, credentials, artifacts, or implementation into this public repository
 without approval.
 
-An open-source license has not been selected yet; public visibility alone does
-not grant reuse rights.
+## License and hosted service
+
+Copyright (C) 2026 gq-games-api contributors.
+
+This project's original code is licensed under the **GNU Affero General Public
+License, version 3 only** (`AGPL-3.0-only`). See [LICENSE](LICENSE). You may
+use, modify, and redistribute it under those terms, including commercial
+self-hosting. The software is provided without warranty; see the license for
+details.
+
+The planned paid service charges for the managed API, infrastructure, maintained
+data, and support—not for the right to use the code commercially. No hosted
+service, pricing, billing, or catalog is implemented yet.
+
+Modified network-served versions must prominently offer their corresponding
+source to users as required by AGPL section 13. Future SDKs are intended to use
+MIT under separate explicit licenses; none exist today. Third-party dependencies
+retain their own licenses, and game-data rights are separate from the code
+license.
+
+See [business model and licensing boundaries](docs/business-model.md).

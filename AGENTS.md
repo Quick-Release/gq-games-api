@@ -19,5 +19,15 @@
 - Do not deploy, bootstrap cloud state, create infrastructure, or add deployment
   automation without an explicit request. Cloudflare credentials and private
   ingestion details never belong in the public repository.
-- No open-source license is selected yet. Do not assume public visibility
-  permits copying this code or privately owned source into another project.
+- Original project code is AGPL-3.0-only. Commercial self-hosting is permitted;
+  revenue is planned from the managed service, not mandatory commercial-use
+  fees.
+- Preserve copyright/license notices and use SPDX headers for new source files.
+  Future SDKs need an explicit separate MIT license before being described as
+  MIT.
+- Keep data licensing and private `gq-crawl` rights separate from the server
+  code. Review obligations before combining private components with AGPL-covered
+  code.
+- Deployments must provide any required corresponding-source offer for the
+  actual network-served version. See `docs/business-model.md`; no paid service
+  exists yet.

@@ -3,6 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "description": "Research-first games API on Cloudflare with Alchemy, Effect, Hono, and Vite+",
+  "license": "AGPL-3.0-only",
   "type": "module",
   "scripts": {
     "dev": "vp dev",
