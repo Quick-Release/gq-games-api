@@ -6,11 +6,17 @@ import * as Alchemy from 'alchemy';
 import * as Cloudflare from 'alchemy/Cloudflare';
 import { localState } from 'alchemy/State';
 import { Effect } from 'effect';
+import drizzleConfig from './drizzle.config.ts';
+
+export const Db = Cloudflare.D1.Database('Database', {
+  migrations: drizzleConfig.out,
+});
 
 // One configuration for Alchemy dev, deployment, and the offline build adapter.
 // Plain Worker mode keeps Hono/runtime code separate from infrastructure.
 export const apiConfig = {
   main: './src/index.ts',
+  env: { DB: Db },
   compatibility: { date: '2026-10-07', flags: ['nodejs_compat'] },
   workersDev: true,
   dev: { host: '127.0.0.1', port: 8787, strictPort: true },

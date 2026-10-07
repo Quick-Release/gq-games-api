@@ -4,10 +4,11 @@
 
 import { Effect } from 'effect';
 import { Hono } from 'hono';
+import type { WorkerEnv } from './env';
 import { getHealth } from './services/health';
 
 export const createApp = () => {
-  const app = new Hono();
+  const app = new Hono<{ Bindings: WorkerEnv }>();
 
   app.get('/', (c) =>
     c.json({

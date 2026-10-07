@@ -26,4 +26,6 @@ jobs:
       - run: vp check
       - run: vp lint --deny-warnings
       - run: vp test
+      - run: vp run test:integration
+      - run: vp run db:check
       - run: vp run build

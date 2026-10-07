@@ -5,24 +5,33 @@
 import { defineConfig } from 'vite-plus';
 
 // Vite+ owns quality tooling; Alchemy owns Worker builds and local workerd.
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   fmt: {
     singleQuote: true,
     printWidth: 80,
     proseWrap: 'always',
     ignorePatterns: [
       'pnpm-lock.yaml',
+      '.agents/skills/**',
       'dist/**',
       '.alchemy/**',
       '.wrangler/**',
     ],
   },
   lint: {
-    ignorePatterns: ['dist/**', '.alchemy/**', '.wrangler/**'],
+    ignorePatterns: [
+      '.agents/skills/**',
+      'dist/**',
+      '.alchemy/**',
+      '.wrangler/**',
+    ],
     options: { typeAware: true, typeCheck: true, denyWarnings: true },
   },
   test: {
-    include: ['tests/**/*.test.ts'],
+    include:
+      mode === 'integration'
+        ? ['tests/integration/**/*.test.ts']
+        : ['tests/*.test.ts'],
     watch: false,
   },
-});
+}));

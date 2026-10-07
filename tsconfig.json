@@ -18,6 +18,7 @@
     "tests/**/*.ts",
     "scripts/**/*.ts",
     "vite.config.ts",
-    "alchemy.run.ts"
+    "alchemy.run.ts",
+    "drizzle.config.ts"
   ]
 }

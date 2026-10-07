@@ -29,10 +29,13 @@
    rights are reviewed.
 2. **Workers runtime:** run Hono + Effect application tests in workerd,
    including cancellation, typed failures, cleanup, logging, and binding access.
-   Current unit tests execute in Node; local smoke tests cover the real Worker
-   separately.
-3. **Storage selection:** compare only the stores needed for representative
-   lookups and filters; record indexing, pagination, consistency, and costs.
+   Unit tests execute in Node; `pnpm test:integration` now covers synthetic
+   Drizzle/D1 CRUD, migrations, and restart behavior in workerd. Broader request
+   lifecycle behavior remains to be measured.
+3. **Storage requirements:** D1/Drizzle are selected and declared, without
+   application tables or remote provisioning. Measure representative lookups,
+   filters, indexing, pagination, consistency, and costs before designing the
+   real schema or adding other stores.
 4. **Ingestion delivery:** simulate duplicate/out-of-order events, schema
    changes, failure/retry, and replay using synthetic fixtures. Compare
    authenticated HTTP, service bindings, and Queues only if relevant.
@@ -59,6 +62,8 @@ measured.
 - [Alchemy Workers](https://alchemy.run/cloudflare/compute/workers)
 - [Alchemy state](https://alchemy.run/state-store)
 - [Alchemy CLI](https://alchemy.run/cli)
+- [Drizzle D1](https://orm.drizzle.team/docs/get-started/d1-new)
+- [Drizzle v0/v1 changes](https://orm.drizzle.team/docs/v0-v1-changes)
 - [Effect](https://effect.website/)
 - [Hono on Workers](https://hono.dev/docs/getting-started/cloudflare-workers)
 - [Vite+](https://viteplus.dev/guide/)

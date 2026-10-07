@@ -2,8 +2,11 @@
 
 ## Confirmed choices
 
-Cloudflare ecosystem, Alchemy, Effect, Hono, Vite+, and an eventual `gq-crawl`
-integration. Everything below is a proposal, not a provisioned architecture.
+Cloudflare Workers, D1, Alchemy, Effect, Hono, Drizzle, and Vite+, with an
+eventual `gq-crawl` integration. A D1 declaration, empty Drizzle application
+schema, and Effect-native query service now exist; the synthetic integration
+suite runs them locally in workerd. No remote infrastructure has been
+provisioned. The domain architecture below remains a proposal.
 
 ## Proposed responsibilities
 
@@ -46,8 +49,8 @@ separate Workers; decide after studying isolation and operational needs.
 | KV/Cache   | Read optimization                     | Invalidation and consistency            |
 
 Do not provision all of these just because they are available. Start with
-measured requirements. No storage, queue, workflow, or crawler binding exists
-today.
+measured requirements. Only D1 is declared/bound today; its application schema
+is empty. No queue, workflow, or crawler binding exists.
 
 ## Hono and Effect boundary
 
@@ -57,10 +60,11 @@ Map expected failures to deliberate HTTP status codes; never serialize raw
 errors. Compose service Layers at the runtime boundary and scope disposable
 resources per request.
 
-The initial scaffold runs one pure health Effect via `Effect.runPromise`. It
-does not yet define application Layers, schemas, repositories, or game domain
-models. Alchemy v2 also uses Effect for infrastructure; its imports must not
-enter the Worker runtime bundle.
+The scaffold runs a pure health Effect via `Effect.runPromise` and provides an
+Effect `Database` Layer for Drizzle/D1 queries. No domain tables, repositories,
+or game domain models exist yet. See [database tooling](../database.md). Alchemy
+v2 also uses Effect for infrastructure; infrastructure values must not enter the
+Worker runtime bundle. Binding inference uses erased type-only imports.
 
 ## gq-crawl contract to investigate
 

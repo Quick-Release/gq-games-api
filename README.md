@@ -1,29 +1,34 @@
 # gq-games-api
 
 Research-first games API for the Cloudflare ecosystem, built with **Alchemy,
-Effect, Hono, and Vite+**.
+Effect, Hono, Drizzle, and Vite+**.
 
 **Status: research + minimal scaffold.** The repository contains a working
-health endpoint and development tooling, not a games catalog or deployed
-service. No Cloudflare resources have been created for this scaffold. `gq-crawl`
-is the planned ingestion system; no crawler integration exists yet.
+health endpoint, Drizzle/D1 foundation, and development tooling, not a games
+catalog or deployed service. No Cloudflare resources have been created for this
+scaffold. `gq-crawl` is the planned ingestion system; no crawler integration
+exists yet.
 
 ## Direction
 
-- **Cloudflare Workers**: API runtime. Evaluate D1, R2, Queues, Workflows, and
-  caching against actual requirements before provisioning them.
+- **Cloudflare Workers + D1**: API runtime and declared relational database. D1
+  runs locally; the application schema is still empty. Evaluate R2, Queues,
+  Workflows, and caching against actual requirements before provisioning them.
 - **Alchemy**: TypeScript infrastructure, local workerd development, Worker
   builds, and eventual deployments.
 - **Effect**: application services, typed failures, schemas, and resource
   lifecycles. Hono remains the HTTP boundary.
 - **Hono**: routing and HTTP responses.
+- **Drizzle**: Effect-native D1 queries, typed SQLite schema, and SQL migration
+  generation; Alchemy owns migration application.
 - **Vite+**: checks, tests, formatting, linting, and task running.
 - **gq-crawl**: private upstream ingestion research/application. Publish only
   reviewed, licensed, normalized game records—not raw crawls or internal data.
 
 See [architecture](docs/research/architecture.md), the
-[research backlog](docs/research/backlog.md), and
-[development/deployment notes](docs/development.md). The planned
+[research backlog](docs/research/backlog.md),
+[development/deployment notes](docs/development.md), and
+[database tooling](docs/database.md). The planned
 [business model](docs/business-model.md) is an open-source server with a paid
 managed API, not a personal-use-only license.
 
@@ -52,7 +57,10 @@ routes return JSON 404s; unexpected failures return a generic JSON 500.
 pnpm format       # Oxfmt
 pnpm lint         # Oxlint + type-aware checks
 pnpm check        # formatting + lint + TypeScript checks
-pnpm test         # bundled Vitest; HTTP boundary + tooling tests
+pnpm test         # Node HTTP, tooling, and database service unit tests
+pnpm test:integration # real local workerd, synthetic D1 queries + migrations
+pnpm db:generate  # generate migration SQL after defining approved tables
+pnpm db:check     # check migration consistency
 pnpm build        # offline Alchemy/Rolldown Worker build
 pnpm preview      # Alchemy/workerd; stop dev first (same port)
 ```
@@ -68,7 +76,9 @@ in `alchemy.run.ts`**, with no Wrangler file. Dev and preview use reserved local
 stages and require no cloud credentials for this scaffold; review new resources
 before assuming they can be emulated locally.
 
-CI runs checks, lint, tests, and a Worker build. It does **not** deploy.
+CI runs checks, lint, both test suites, migration checks, and a Worker build. It
+does **not** deploy. Drizzle ORM/Kit are pinned to Alchemy's expected v1 RC; see
+[database notes](docs/database.md) before changing those versions.
 
 ## Deployment is deliberately manual
 
@@ -85,9 +95,10 @@ pnpm plan --stage dev
 pnpm run deploy --stage dev
 ```
 
-**Deploy creates a public Workers endpoint.** Do not deploy substantive game or
-write endpoints before access, rate limiting, source licensing, and ingestion
-contracts are settled. No credentials or account identifiers are committed.
+**Deploy creates a public Workers endpoint and can provision a D1 database.** Do
+not deploy substantive game or write endpoints before access, rate limiting,
+source licensing, and ingestion contracts are settled. No credentials or account
+identifiers are committed.
 
 ## Publication
 

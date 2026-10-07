@@ -4,14 +4,20 @@
 
 ```text
 src/app.ts               Hono HTTP boundary, exported factory for tests
-src/services/health.ts   First Effect service
+src/services/health.ts   Process-only health Effect
+src/db/                 Drizzle schema and Effect-native D1 service
+src/env.ts              Type-only Alchemy binding inference
 src/index.ts             Cloudflare Worker entrypoint
-alchemy.run.ts           Single Worker configuration and Alchemy v2 stack
+alchemy.run.ts           Worker + D1 declarations and Alchemy v2 stack
+drizzle.config.ts       Credential-free migration generation config
+drizzle/                Reviewed application migrations (none yet)
 scripts/build-worker.ts  Offline Alchemy source-provider build adapter
 scripts/preview-worker.ts Local-only preview of the built Worker
 vite.config.ts           Vite+ test, lint, format, and check settings
 tests/app.test.ts        Node unit tests of the HTTP boundary
 tests/tooling.test.ts    Tooling configuration regression tests
+tests/database.test.ts   Database service unit tests with a D1 stub
+tests/integration/       Real local workerd D1/Drizzle integration test
 docs/research/           Proposed architecture and experiments
 ```
 
@@ -33,19 +39,22 @@ infrastructure module.
   inherits the Worker settings and bindings from `apiConfig`. The preview stack
   rejects non-dev execution and must never be deployed.
 
-The current Worker and `localState()` run locally without Cloudflare credentials
-or provisioning. Alchemy defaults Workers to local emulation during dev, but
-**this is not a universal no-cloud guarantee**: `Alchemy.remote()` and resources
-without a local provider can operate on real infrastructure. Review new
-resources before adding them. Do not use deployed stages for local dev/preview;
-switching provider modes in the same stage can replace real resources. The
-scripts reserve `local-dev` and `local-preview`, separate from the manual
-deployment stage.
+The current Worker, D1, and `localState()` run locally without Cloudflare
+credentials or remote provisioning. D1 is emulated in workerd and receives
+pending migrations on local reconciliation. See [database tooling](database.md)
+for Drizzle queries, generation, and migration ownership. Alchemy defaults
+Workers to local emulation during dev, but **this is not a universal no-cloud
+guarantee**: `Alchemy.remote()` and resources without a local provider can
+operate on real infrastructure. Review new resources before adding them. Do not
+use deployed stages for local dev/preview; switching provider modes in the same
+stage can replace real resources. The scripts reserve `local-dev` and
+`local-preview`, separate from the manual deployment stage.
 
-Node tests exercise Hono directly and check tooling configuration; they do not
-validate workerd or Cloudflare bindings. Smoke-test both dev and preview against
-`/health` when changing the bundler/runtime, and add a dedicated workerd
-integration suite when real bindings are introduced.
+Node unit tests exercise Hono, tooling configuration, and the database service
+with a stub; they do not validate workerd or Cloudflare bindings. Run
+`pnpm test:integration` for the synthetic Drizzle/D1 fixture in real local
+workerd, including migrations and restart behavior. Smoke-test both dev and
+preview against `/health` when changing the bundler/runtime.
 
 ## Vite+ tooling
 
@@ -54,8 +63,9 @@ scripts. A project-local CLI is available via `pnpm exec vp` without a global
 installation. Use `vp run dev`, `vp run build`, and `vp run preview` to invoke
 Alchemy-backed tooling; bare `vp dev/build/preview` are Vite commands and are
 not the Worker tooling. `vp run plan` and `vp run deploy` invoke the Alchemy
-scripts. `vp pack` exists for future independently published libraries but has
-no configured target today.
+scripts. `vp run db:generate`, `vp run db:check`, and `vp run test:integration`
+cover the database tooling. `vp pack` exists for future independently published
+libraries but has no configured target today.
 
 pnpm overrides align Vite and Vitest with Vite+'s bundled versions. The Vite
 alias reports the Vite+ version, so the targeted peer-version exception is
@@ -67,7 +77,8 @@ transitive default is too old for compatibility date `2026-10-07`. Keep the
 runtime override compatible with the single date in `alchemy.run.ts`. Native
 build scripts are restricted to esbuild and workerd.
 
-CI does not need Cloudflare secrets and never executes Alchemy deployment tasks.
+CI runs the local D1 integration fixture, migration checks, and offline build.
+It does not need Cloudflare secrets and never executes Alchemy deployment tasks.
 Keep credentials out of pull-request jobs, especially contributions from forks.
 
 ## Manual deployment preparation
@@ -88,9 +99,10 @@ Keep credentials out of pull-request jobs, especially contributions from forks.
 5. Verify `/health` on the returned URL and record the runtime experiment.
 
 `workersDev: true` makes the deployed Worker publicly accessible. No public game
-API, authenticated ingestion, quotas, CORS policy, or data storage is
-implemented by the scaffold. Review them before exposing anything beyond
-health/metadata.
+API, authenticated ingestion, quotas, or CORS policy is implemented. D1 is
+declared with an empty application schema; no game persistence exists. Deploy
+can now create a D1 database, so review costs and migration SQL as well as the
+public HTTP surface before deploying.
 
 ## State and secrets
 

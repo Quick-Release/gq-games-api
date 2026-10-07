@@ -4,7 +4,8 @@
 
 import { existsSync } from 'node:fs';
 import { describe, expect, it } from 'vite-plus/test';
-import { apiConfig } from '../alchemy.run';
+import { apiConfig, Db } from '../alchemy.run';
+import drizzleConfig from '../drizzle.config';
 import pkg from '../package.json';
 
 // Configuration regression tests, not Cloudflare binding/runtime validation.
@@ -20,6 +21,20 @@ describe('Alchemy tooling', () => {
       port: 8787,
       strictPort: true,
     });
+  });
+
+  it('binds D1 in Alchemy and keeps migration generation credential-free', () => {
+    expect(apiConfig.env.DB).toBe(Db);
+    expect(drizzleConfig).toEqual({
+      dialect: 'sqlite',
+      schema: './src/db/schema.ts',
+      out: './drizzle',
+    });
+    expect(pkg.dependencies['drizzle-orm']).toBe(
+      pkg.devDependencies['drizzle-kit'],
+    );
+    expect(pkg.dependencies['@effect/sql-d1']).toBe(pkg.dependencies.effect);
+    expect(existsSync('drizzle/meta/_journal.json')).toBe(false);
   });
 
   it('keeps local tooling separate from deployment stages', () => {

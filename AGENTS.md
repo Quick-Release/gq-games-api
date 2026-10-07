@@ -2,9 +2,13 @@
 
 - This is a **public research-first repository**. Keep implemented behavior
   separate from proposals, experiments, and private `gq-crawl` material.
-- Confirmed stack: Cloudflare Workers, Alchemy v2, Effect 4, Hono, and Vite+.
-  Consult the pinned versions before following examples from older major
-  versions.
+- Confirmed stack: Cloudflare Workers + D1, Alchemy v2, Effect 4, Hono, Drizzle,
+  and Vite+. Consult the pinned versions before following examples from older
+  major versions.
+- Drizzle ORM/Kit must match Alchemy's pinned v1 RC peer version. Use the native
+  Effect D1 service, generate/review SQL before applying it, and let Alchemy own
+  migration history. Do not add Wrangler or a second migration executor.
+  `pnpm test:integration` validates synthetic D1 behavior in local workerd.
 - Keep infrastructure in `alchemy.run.ts`, HTTP concerns in Hono, and
   application services in Effect. Never import infrastructure values into the
   Worker bundle.
