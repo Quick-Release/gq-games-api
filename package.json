@@ -1,0 +1,38 @@
+{
+  "name": "gq-games-api",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Research-first games API on Cloudflare with Alchemy, Effect, Hono, and Vite+",
+  "type": "module",
+  "scripts": {
+    "dev": "vp dev",
+    "build": "vp build",
+    "preview": "vp preview",
+    "check": "vp check",
+    "format": "vp fmt",
+    "lint": "vp lint --deny-warnings",
+    "test": "vp test",
+    "test:watch": "vp test --watch",
+    "deploy": "alchemy deploy",
+    "plan": "alchemy plan"
+  },
+  "dependencies": {
+    "effect": "4.0.1",
+    "hono": "4.13.13"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "1.63.0",
+    "@cloudflare/workers-types": "5.20261007.1",
+    "@effect/platform-node": "4.0.1",
+    "@types/node": "24.19.1",
+    "alchemy": "2.0.0-beta.81",
+    "typescript": "6.0.3",
+    "vite": "npm:@voidzero-dev/vite-plus-core@1.1.0",
+    "vite-plus": "1.1.0",
+    "wrangler": "4.148.0"
+  },
+  "engines": {
+    "node": "^22.18.0 || ^24.11.0 || >=26.0.0"
+  },
+  "packageManager": "pnpm@10.29.1"
+}

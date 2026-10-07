@@ -1,0 +1,13 @@
+overrides:
+  vite@*: npm:@voidzero-dev/vite-plus-core@1.1.0
+  vitest@*: 5.0.3
+
+# Vite+ reports its own version rather than the bundled Vite version.
+peerDependencyRules:
+  allowedVersions:
+    vite: 1.1.0
+
+# Required by the Workers runtime and Vite+'s native toolchain.
+onlyBuiltDependencies:
+  - esbuild
+  - workerd
