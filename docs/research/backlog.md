@@ -2,17 +2,35 @@
 
 ## Questions before a games implementation
 
-- Who consumes the API, and which use cases come first: discovery, metadata,
-  platforms, releases, availability, pricing, or search?
+- The initial consumer contract is Steam App ID lookup for application identity
+  and release metadata, including verified Game, Demo, and DLC product types.
+  Versioned routes and representations are agreed in the
+  [catalog contract](../steam-catalog-contract.md), not implemented. Which
+  consumers and production access limits support that lookup? Discovery, search,
+  and canonical Game grouping are not initial requirements. Players, reviews,
+  prices, and the other excluded datasets are not optional additions to this
+  metadata-only scope. See the [Steam catalog design](steam-game-schema.md).
 - Which sources may legally be collected, stored, and redistributed? What
   attribution, retention, and deletion obligations apply?
-- What is a game versus an edition, platform release, bundle, or DLC? How are
-  identifiers reconciled between sources?
-- What freshness, availability, latency, scale, and cost targets matter?
-- What will `gq-crawl` deliver, through which transport, and under which shared
-  versioned schema? Its current integration is not implemented.
-- Which read endpoints are public, authenticated, or quota-limited? Who may
-  ingest or correct records?
+- Use the root [glossary](../../GLOSSARY.md): Steam Application identity is its
+  App ID; canonical Game identity and editorial edition grouping are not part of
+  the initial catalog. Optional verified base-application links do not require
+  cataloged targets. Cross-source Game reconciliation would need a future use
+  case and separate design.
+- Initial lookup serves last-known approved English metadata with observation
+  time, not a real-time freshness promise. What availability, latency, scale,
+  and cost targets matter?
+- Agree the private `gq-crawl` producer's adoption of the versioned HTTP
+  contract: one full English single-source snapshot per synchronous PUT,
+  acquire-before-collect publication generation, clock synchronization, source
+  policy matching, ordering, and retry behavior. Contract bounds/equality and
+  atomic guarantees are specified; verify source fields and runtime behavior. No
+  private adapter, patches, or exactly-once ledger is implemented.
+- Lookup is anonymous; ingestion and publication administration use separate
+  credentials. What production abuse limits, quotas, credential rotation, and
+  operational controls are required? Withdrawal atomically purges metadata;
+  reinstatement changes generation without restoring it. Obtain express rights
+  approval for durable App ID/state/generation/timestamp control retention.
 - Which Cloudflare account, domains, environments, secrets, and ownership model
   will be used?
 - Which data licenses and redistribution rights support the hosted service?
@@ -24,8 +42,10 @@
 
 ## First experiments
 
-1. **Catalog contract:** use a small synthetic dataset to test identity,
-   provenance, freshness, and versioned schemas. No real source data until
+1. **Catalog contract:** implement the agreed
+   [HTTP and persistence acceptance tests](../steam-catalog-contract.md#required-synthetic-acceptance-tests)
+   with synthetic records: strict payloads, provenance, latest-state ordering,
+   role separation, and generation-fenced publication. No real source data until
    rights are reviewed.
 2. **Workers runtime:** run Hono + Effect application tests in workerd,
    including cancellation, typed failures, cleanup, logging, and binding access.
@@ -33,17 +53,22 @@
    Drizzle/D1 CRUD, migrations, and restart behavior in workerd. Broader request
    lifecycle behavior remains to be measured.
 3. **Storage requirements:** D1/Drizzle are selected and declared, without
-   application tables or remote provisioning. Measure representative lookups,
-   filters, indexing, pagination, consistency, and costs before designing the
-   real schema or adding other stores.
-4. **Ingestion delivery:** simulate duplicate/out-of-order events, schema
-   changes, failure/retry, and replay using synthetic fixtures. Compare
-   authenticated HTTP, service bindings, and Queues only if relevant.
+   application tables or remote provisioning. Review catalog/control schema and
+   generated SQL; verify conditional upserts, atomic batches, outcome
+   classification, rollback, and primary lookup/withdrawal races in workerd.
+   Measure App ID lookup costs before adding indexes or stores.
+4. **Ingestion delivery:** validate the selected synchronous private HTTP
+   contract with duplicate/out-of-order snapshots, generation changes,
+   failure/retry uncertainty, and concurrent privileged operations. Use
+   synthetic fixtures; do not introduce a second transport or processing ledger
+   by default.
 5. **Deployment:** validate Alchemy beta behavior in a disposable stage,
    including plan, state recovery, drift, resource naming, and teardown. Select
    shared state before introducing CI deployment.
-6. **Public API:** test pagination, caching/invalidation, rate limiting, CORS,
-   authorization, abuse handling, and response budgets.
+6. **Public API:** test anonymous lookup, role-separated private operations,
+   no-store/request-ID headers, safe error contracts, payload budgets, and
+   post-withdrawal visibility. Decide production rate limiting, CORS, and abuse
+   handling before deployment; listing/pagination and caching are not selected.
 
 ## Acceptance gate for a first real endpoint
 
