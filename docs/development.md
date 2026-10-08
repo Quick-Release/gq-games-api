@@ -5,19 +5,21 @@
 ```text
 src/app.ts               Hono HTTP boundary, exported factory for tests
 src/services/health.ts   Process-only health Effect
+src/services/catalog.ts  Publication acquisition/inspection Effect service
+src/http/catalog.ts      Private catalog transport, authentication, and errors
 src/db/                 Drizzle schema and Effect-native D1 service
 src/env.ts              Type-only Alchemy binding inference
 src/index.ts             Cloudflare Worker entrypoint
 alchemy.run.ts           Worker + D1 declarations and Alchemy v2 stack
 drizzle.config.ts       Credential-free migration generation config
-drizzle/                Reviewed application migrations (none yet)
+drizzle/                Reviewed minimal publication-control migration
 scripts/build-worker.ts  Offline Alchemy source-provider build adapter
 scripts/preview-worker.ts Local-only preview of the built Worker
 vite.config.ts           Vite+ test, lint, format, and check settings
 tests/app.test.ts        Node unit tests of the HTTP boundary
 tests/tooling.test.ts    Tooling configuration regression tests
 tests/database.test.ts   Database service unit tests with a D1 stub
-tests/integration/       Real local workerd D1/Drizzle integration test
+tests/integration/       Real local workerd catalog + D1/Drizzle tests
 docs/research/           Proposed architecture and experiments
 ```
 
@@ -39,16 +41,22 @@ infrastructure module.
   inherits the Worker settings and bindings from `apiConfig`. The preview stack
   rejects non-dev execution and must never be deployed.
 
-The current Worker, D1, and `localState()` run locally without Cloudflare
-credentials or remote provisioning. D1 is emulated in workerd and receives
-pending migrations on local reconciliation. See [database tooling](database.md)
-for Drizzle queries, generation, and migration ownership. Alchemy defaults
-Workers to local emulation during dev, but **this is not a universal no-cloud
-guarantee**: `Alchemy.remote()` and resources without a local provider can
-operate on real infrastructure. Review new resources before adding them. Do not
-use deployed stages for local dev/preview; switching provider modes in the same
-stage can replace real resources. The scripts reserve `local-dev` and
-`local-preview`, separate from the manual deployment stage.
+The current Worker and D1 run locally without Cloudflare credentials or remote
+provisioning. Dev and preview persist only Alchemy's credential-free D1 resource
+state (including its local identity); Worker state and stack outputs stay in
+memory because pinned Alchemy's JSON encoder unwraps redacted secrets. Local D1
+storage and its Alchemy-owned migration history remain durable across restarts;
+the synthetic fixture exercises this actual state adapter and verifies that
+credentials appear in neither files nor diagnostics. Existing credential-free
+scaffold state files are not deleted or migrated. D1 is emulated in workerd and
+receives pending migrations on local reconciliation. See
+[database tooling](database.md) for Drizzle queries, generation, and migration
+ownership. Alchemy defaults Workers to local emulation during dev, but **this is
+not a universal no-cloud guarantee**: `Alchemy.remote()` and resources without a
+local provider can operate on real infrastructure. Review new resources before
+adding them. Do not use deployed stages for local dev/preview; switching
+provider modes in the same stage can replace real resources. The scripts reserve
+`local-dev` and `local-preview`, separate from the manual deployment stage.
 
 Node unit tests exercise Hono, tooling configuration, and the database service
 with a stub; they do not validate workerd or Cloudflare bindings. Run
@@ -98,25 +106,48 @@ Keep credentials out of pull-request jobs, especially contributions from forks.
    deployed resource name.
 5. Verify `/health` on the returned URL and record the runtime experiment.
 
-`workersDev: true` makes the deployed Worker publicly accessible. No public game
-API, authenticated ingestion, quotas, or CORS policy is implemented. D1 is
-declared with an empty application schema; no game persistence exists. Deploy
-can now create a D1 database, so review costs and migration SQL as well as the
-public HTTP surface before deploying.
+`workersDev: true` makes the deployed Worker publicly accessible. Two private
+publication-control operations are implemented; public lookup, snapshot
+submission, admin transitions, quotas, and CORS policy are not. D1 retains only
+minimal publication control, not game metadata. Deploy can now create a D1
+database, so review costs and migration SQL as well as the public HTTP surface
+before deploying.
 
 ## State and secrets
 
-The stack explicitly uses `localState()`, keeping state in ignored `.alchemy/`.
-Local state is sufficient for a single-developer experiment, not collaborative
-production deployment. Protect and back it up; deleting state or deploying from
-a fresh checkout can orphan resources or break reconciliation. Do not switch to
-shared state or add CI deployment without a migration/recovery plan.
+Local dev/preview use a narrowly scoped state adapter in `alchemy.run.ts`. Only
+D1 resource state is persisted, retaining the local identity needed to reopen
+its files in ignored `.alchemy/`. Worker configuration and stack outputs stay in
+memory so resolved bearer secrets never enter JSON state. This adapter is for
+local emulation only, not cloud resource management or migration execution.
+Restart reuses D1 identity and storage without replaying migrations.
+
+For non-dev commands the original credential-free scaffold retains
+`localState()`. Any configured publication secret blocks the ordinary stack
+before resource reconciliation: pinned Alchemy persists even `Redacted` values
+in plaintext JSON state. A secret-bearing deployment requires a separately
+approved protected state store, migration/recovery plan, and credential rollout.
+No cloud state bootstrap, encryption adapter, or CI deployment has been added.
+Protect existing state; deleting it or deploying from a fresh checkout can
+orphan resources or break reconciliation.
 
 A future `Cloudflare.state()` backend can bootstrap real state infrastructure,
 even during commands people expect to be read-only or local. Do not add
 automatic approval flags casually. This project uses Alchemy's local Worker
-provider with local state; retain those defaults for credential-free
-development.
+provider with credential-free persisted D1 state and ephemeral Worker state for
+development; retain local-only provider defaults. Neither ignored state nor
+`Redacted` logging wrappers are secret encryption.
+
+Private publication routes use `INGESTION_BEARER_TOKEN` and
+`PUBLICATION_ADMIN_BEARER_TOKEN` via Alchemy `Config.Redacted` bindings, emitted
+as Worker secret_text values. Supply independently generated opaque values
+through protected local configuration/environment; never put them in examples,
+SQL, fixtures, or logs. Empty defaults permit scaffold/health development but
+private requests return 503 unless both secrets are present and distinct. HTTPS
+is required by the production application even on the regular local HTTP dev
+server; the explicit insecure factory option is reserved for tests, not a Worker
+environment switch. No rotation rollout or production credential setup has been
+performed.
 
 Ignore `.env*`, `.dev.vars*`, `.alchemy/`, `.wrangler/`, logs, and build output.
 Commit only reviewed placeholder examples if secrets become necessary. Public

@@ -5,14 +5,14 @@
 import * as Alchemy from 'alchemy';
 import { AlchemyContext } from 'alchemy/AlchemyContext';
 import * as Cloudflare from 'alchemy/Cloudflare';
-import { localState } from 'alchemy/State';
 import { Effect } from 'effect';
-import { apiConfig } from '../alchemy.run.ts';
+import { apiConfig, localPublicationState } from '../alchemy.run.ts';
 
 // This stack is only for local preview of the offline build, never deployment.
 export default Alchemy.Stack(
   'gq-games-api-preview',
-  { providers: Cloudflare.providers(), state: localState() },
+  // Preview is local-only: persist D1 identity, never Worker secrets.
+  { providers: Cloudflare.providers(), state: localPublicationState },
   Effect.gen(function* () {
     if (!(yield* AlchemyContext).dev) {
       return yield* Effect.die('Preview is local-only. Use pnpm preview.');

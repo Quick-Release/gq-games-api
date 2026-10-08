@@ -3,16 +3,16 @@
 Research-first games API for the Cloudflare ecosystem, built with **Alchemy,
 Effect, Hono, Drizzle, and Vite+**.
 
-**Status: research + minimal scaffold.** The repository contains a working
-health endpoint, Drizzle/D1 foundation, and development tooling, not a games
-catalog or deployed service. No Cloudflare resources have been created for this
-scaffold. `gq-crawl` is the planned ingestion system; no crawler integration
-exists yet.
+**Status: research + synthetic publication control.** The repository implements
+process health and two private Steam Application publication-control operations
+on local D1. Snapshot ingestion, public catalog lookup, and administrative state
+changes are not implemented. No cloud resources have been provisioned or service
+deployed. `gq-crawl` integration and real-source approval remain out of scope.
 
 ## Direction
 
 - **Cloudflare Workers + D1**: API runtime and declared relational database. D1
-  runs locally; the application schema is still empty. Evaluate R2, Queues,
+  runs locally with minimal publication control only. Evaluate R2, Queues,
   Workflows, and caching against actual requirements before provisioning them.
 - **Alchemy**: TypeScript infrastructure, local workerd development, Worker
   builds, and eventual deployments.
@@ -45,10 +45,30 @@ pnpm dev
 
 Implemented routes:
 
-| Method | Path      | Purpose                                   |
-| ------ | --------- | ----------------------------------------- |
-| GET    | `/`       | Scaffold metadata and available endpoints |
-| GET    | `/health` | Process health through an Effect service  |
+| Method | Path                                                                   | Purpose                                                      |
+| ------ | ---------------------------------------------------------------------- | ------------------------------------------------------------ |
+| GET    | `/`                                                                    | Scaffold metadata                                            |
+| GET    | `/health`                                                              | Process health through an Effect service                     |
+| POST   | `/internal/v1/steam/applications/{steamAppId}/ingestion-authorization` | Ingestion-role acquisition of current publication generation |
+| GET    | `/internal/v1/steam/applications/{steamAppId}/publication`             | Admin-role inspection, including absent control              |
+
+Acquisition atomically initializes only absent control, preserves existing
+eligible generation/timestamp, and refuses withdrawal. Inspection does not
+initialize control. No snapshot, upstream content, publication reason, or
+history is stored. See [the contract](docs/steam-catalog-contract.md) for
+response shapes and remaining proposed operations.
+
+Private routes require HTTPS and distinct opaque Worker secrets
+`INGESTION_BEARER_TOKEN` / `PUBLICATION_ADMIN_BEARER_TOKEN`; missing or
+ambiguous configuration fails closed with 503. Alchemy resolves these via
+redacted Config bindings into Worker secrets. Local Worker state stays in memory
+so Alchemy cannot persist them in plaintext JSON; only credential-free D1
+identity/migration state is persisted, keeping D1 durable. Configured
+publication secrets block non-dev stack operations pending an approved protected
+state/rollout plan. Test credentials are ephemeral; only test factory options
+allow insecure local HTTP. The regular local scaffold/health remain usable
+without secrets. Private responses and errors are no-store with server-owned
+request IDs and sanitized envelopes.
 
 Health reports only this process, not crawler or storage readiness. Missing
 routes return JSON 404s; unexpected failures return a generic JSON 500.
@@ -58,7 +78,7 @@ pnpm format       # Oxfmt
 pnpm lint         # Oxlint + type-aware checks
 pnpm check        # formatting + lint + TypeScript checks
 pnpm test         # Node HTTP, tooling, and database service unit tests
-pnpm test:integration # real local workerd, synthetic D1 queries + migrations
+pnpm test:integration # real local workerd, synthetic catalog atomicity + D1
 pnpm db:generate  # generate migration SQL after defining approved tables
 pnpm db:check     # check migration consistency
 pnpm build        # offline Alchemy/Rolldown Worker build
@@ -120,7 +140,7 @@ details.
 
 The planned paid service charges for the managed API, infrastructure, maintained
 data, and support—not for the right to use the code commercially. No hosted
-service, pricing, billing, or catalog is implemented yet.
+service, pricing, billing, snapshot ingestion, or public catalog lookup exists.
 
 Modified network-served versions must prominently offer their corresponding
 source to users as required by AGPL section 13. Future SDKs are intended to use

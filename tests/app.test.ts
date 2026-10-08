@@ -55,7 +55,7 @@ describe('research API', () => {
       expect(await response.json()).toEqual({
         error: { code: 'INTERNAL_SERVER_ERROR' },
       });
-      expect(log).toHaveBeenCalledOnce();
+      expect(log.mock.calls).toEqual([['Unhandled API error']]);
     } finally {
       log.mockRestore();
     }

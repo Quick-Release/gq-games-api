@@ -4,11 +4,16 @@
 
 import { Effect } from 'effect';
 import { Hono } from 'hono';
-import type { WorkerEnv } from './env';
+import {
+  catalogError,
+  mountCatalog,
+  type CatalogHttpEnv,
+  type CatalogHttpOptions,
+} from './http/catalog';
 import { getHealth } from './services/health';
 
-export const createApp = () => {
-  const app = new Hono<{ Bindings: WorkerEnv }>();
+export const createApp = (options: CatalogHttpOptions = {}) => {
+  const app = new Hono<CatalogHttpEnv>();
 
   app.get('/', (c) =>
     c.json({
@@ -20,10 +25,18 @@ export const createApp = () => {
 
   app.get('/health', async (c) => c.json(await Effect.runPromise(getHealth)));
 
-  app.notFound((c) => c.json({ error: { code: 'NOT_FOUND' } }, 404));
-  app.onError((error, c) => {
-    console.error('Unhandled API error', error);
-    return c.json({ error: { code: 'INTERNAL_SERVER_ERROR' } }, 500);
+  mountCatalog(app, options);
+
+  app.notFound((c) =>
+    c.get('catalogRequestId')
+      ? catalogError(c, 404, 'NOT_FOUND')
+      : c.json({ error: { code: 'NOT_FOUND' } }, 404),
+  );
+  app.onError((_error, c) => {
+    console.error('Unhandled API error');
+    return c.get('catalogRequestId')
+      ? catalogError(c, 500, 'INTERNAL_SERVER_ERROR')
+      : c.json({ error: { code: 'INTERNAL_SERVER_ERROR' } }, 500);
   });
 
   return app;

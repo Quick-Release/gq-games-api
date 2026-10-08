@@ -1,0 +1,84 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "id": "697a0417-80de-41eb-a614-e6621dd58238",
+  "prevIds": ["00000000-0000-0000-0000-000000000000"],
+  "ddl": [
+    {
+      "name": "steam_application_publication",
+      "entityType": "tables"
+    },
+    {
+      "type": "integer",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "steam_app_id",
+      "entityType": "columns",
+      "table": "steam_application_publication"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "state",
+      "entityType": "columns",
+      "table": "steam_application_publication"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "generation",
+      "entityType": "columns",
+      "table": "steam_application_publication"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "generation_issued_at",
+      "entityType": "columns",
+      "table": "steam_application_publication"
+    },
+    {
+      "columns": ["steam_app_id"],
+      "nameExplicit": false,
+      "name": "steam_application_publication_pk",
+      "table": "steam_application_publication",
+      "entityType": "pks"
+    },
+    {
+      "value": "typeof(\"steam_app_id\") = 'integer' and \"steam_app_id\" between 1 and 4294967295",
+      "name": "publication_app_id",
+      "entityType": "checks",
+      "table": "steam_application_publication"
+    },
+    {
+      "value": "\"state\" in ('eligible', 'withdrawn')",
+      "name": "publication_state",
+      "entityType": "checks",
+      "table": "steam_application_publication"
+    },
+    {
+      "value": "length(\"generation\") > 0",
+      "name": "publication_generation",
+      "entityType": "checks",
+      "table": "steam_application_publication"
+    },
+    {
+      "value": "typeof(\"generation_issued_at\") = 'integer' and \"generation_issued_at\" >= 0",
+      "name": "publication_issued_at",
+      "entityType": "checks",
+      "table": "steam_application_publication"
+    }
+  ],
+  "renames": []
+}

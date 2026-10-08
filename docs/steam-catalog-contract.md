@@ -2,10 +2,18 @@
 
 ## Status and scope
 
-**Agreed design; not implemented.** This contract records the HTTP, payload, and
-atomic-persistence decisions confirmed in the design interview. It does not
-approve collection, migrations, infrastructure, credentials, or deployment. Only
-`/` and `/health` exist today, and the application schema is empty.
+**Agreed design; partially implemented under issue #2.** Authorization
+acquisition POST and publication inspection GET now exist, backed by minimal
+durable control and synthetic local workerd tests. `/` and process-only
+`/health` are preserved. Public lookup, snapshot PUT, and publication PUT remain
+unimplemented.
+
+This contract records the HTTP, payload, and atomic-persistence decisions
+confirmed in the design interview. Issue #2 authorizes only the two operations,
+reviewed control migration, secret wiring, and synthetic local verification. It
+does not authorize real collection, cloud provisioning, or deployment. The full
+contract remains normative for future operations; their descriptions below are
+requirements, not claims of implemented behavior.
 
 The initial consumer task is lookup by Steam App ID. Admit verified Game, Demo,
 and DLC applications; no canonical Game identities, editorial editions, search,
@@ -396,12 +404,14 @@ No Sessions integration or replica optimization is selected here.
 
 SQLite documents [UPSERT](https://www.sqlite.org/lang_upsert.html) and
 [RETURNING](https://www.sqlite.org/lang_returning.html); conditional upserts may
-return no rows, and DML returning is not a PostgreSQL-style writable CTE. The
-exact guarded statements, batch result decoding, rollback, and concurrent
-behavior through this pinned stack **have not been runtime-validated by this
-interview**. They are mandatory workerd acceptance tests before claiming the
-contract is implemented. Preserve Alchemy migration ownership; no second
-migration executor, schema push, or provisioning is authorized.
+return no rows, and DML returning is not a PostgreSQL-style writable CTE.
+Authorization acquisition's guarded initialization, captured outcome decoding,
+rollback, and concurrent behavior now have synthetic local workerd coverage.
+Snapshot decisions and administrative transitions **remain unimplemented and
+unvalidated**; they still require their own workerd acceptance evidence before
+claiming the complete contract is implemented. Preserve Alchemy migration
+ownership; no second migration executor, schema push, or provisioning is
+authorized.
 
 ## Required synthetic acceptance tests
 
@@ -459,11 +469,13 @@ mocks alone cannot establish D1 concurrency, transaction, or binding behavior.
 
 ### Still gated
 
-These tests and routes do not exist yet. Synthetic local workerd cannot validate
-production routing, global latency, outages, replica behavior, or revocation of
-consumer-held copies. Before real publication, approve actual source field and
-retention policies, production abuse/rate limits and access budgets, credentials
-and rotation procedures, operational monitoring/recovery, and deployment. The
-private `gq-crawl` producer must agree to and implement acquire-before-collect,
-clock synchronization, source approval, and retry behavior; no private adapter
-or collection is authorized by this document.
+Only the acquisition/inspection slice and its HTTP/workerd coverage exist; the
+remaining routes and acceptance tests above are still required. Synthetic local
+workerd cannot validate production routing, global latency, outages, replica
+behavior, or revocation of consumer-held copies. Before real publication,
+approve actual source field and retention policies, production abuse/rate limits
+and access budgets, credentials and rotation procedures, operational
+monitoring/recovery, and deployment. The private `gq-crawl` producer must agree
+to and implement acquire-before-collect, clock synchronization, source approval,
+and retry behavior; no private adapter or collection is authorized by this
+document.

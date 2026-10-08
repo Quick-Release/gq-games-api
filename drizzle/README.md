@@ -1,7 +1,9 @@
 # D1 migrations
 
 Drizzle Kit generates reviewed SQL and snapshots here from `src/db/schema.ts`.
-There are no application tables or migrations yet.
+`20261008231953_publication_control` creates only minimal Steam Application
+publication control; no snapshots, metadata, seeds, or upstream content exist.
+SQL and its v1 snapshot are reviewed together before local Alchemy application.
 
 1. Define approved tables, then run `pnpm db:generate --name <description>`.
 2. Review and commit the generated directory (`migration.sql` and

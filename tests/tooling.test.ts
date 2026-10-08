@@ -3,8 +3,12 @@
 // See LICENSE in the repository root.
 
 import { existsSync } from 'node:fs';
+import { NodeServices } from '@effect/platform-node';
+import { AlchemyContext } from 'alchemy/AlchemyContext';
+import { State } from 'alchemy/State';
+import { ConfigProvider, Effect } from 'effect';
 import { describe, expect, it } from 'vite-plus/test';
-import { apiConfig, Db } from '../alchemy.run';
+import { apiConfig, Db, publicationState } from '../alchemy.run';
 import drizzleConfig from '../drizzle.config';
 import pkg from '../package.json';
 
@@ -35,6 +39,51 @@ describe('Alchemy tooling', () => {
     );
     expect(pkg.dependencies['@effect/sql-d1']).toBe(pkg.dependencies.effect);
     expect(existsSync('drizzle/meta/_journal.json')).toBe(false);
+  });
+
+  it('never persists configured publication secrets in Alchemy JSON state', async () => {
+    const stateId = (
+      dev: boolean,
+      secrets: Record<string, string | undefined>,
+    ) =>
+      Effect.gen(function* () {
+        const state = yield* yield* State;
+        return state.id;
+      }).pipe(
+        Effect.provide(publicationState),
+        Effect.provideService(AlchemyContext, {
+          dotAlchemy: '.alchemy',
+          dev,
+          adopt: false,
+        }),
+        Effect.provideService(
+          ConfigProvider.ConfigProvider,
+          ConfigProvider.fromUnknown(secrets),
+        ),
+        Effect.provide(NodeServices.layer),
+      );
+    const secrets = {
+      INGESTION_BEARER_TOKEN: crypto.randomUUID(),
+      PUBLICATION_ADMIN_BEARER_TOKEN: crypto.randomUUID(),
+    };
+    expect(await Effect.runPromise(stateId(true, secrets))).toBe(
+      'local-publication',
+    );
+    expect(await Effect.runPromise(stateId(false, {}))).toBe('local');
+    for (const configured of [
+      secrets,
+      { INGESTION_BEARER_TOKEN: secrets.INGESTION_BEARER_TOKEN },
+      {
+        PUBLICATION_ADMIN_BEARER_TOKEN: secrets.PUBLICATION_ADMIN_BEARER_TOKEN,
+      },
+    ]) {
+      const exit = await Effect.runPromiseExit(stateId(false, configured));
+      expect(exit._tag).toBe('Failure');
+      const diagnostic = String(exit);
+      expect(diagnostic).toContain('approved protected deployment state store');
+      expect(diagnostic).not.toContain(secrets.INGESTION_BEARER_TOKEN);
+      expect(diagnostic).not.toContain(secrets.PUBLICATION_ADMIN_BEARER_TOKEN);
+    }
   });
 
   it('keeps local tooling separate from deployment stages', () => {
