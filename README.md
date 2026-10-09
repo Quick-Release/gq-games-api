@@ -3,12 +3,12 @@
 Research-first games API for the Cloudflare ecosystem, built with **Alchemy,
 Effect, Hono, Drizzle, and Vite+**.
 
-**Status: research + synthetic snapshot ingestion/publication control.** The
-repository implements process health, complete snapshot submission, publication
-authorization acquisition, and admin inspection on local D1. Public catalog
-lookup and administrative state changes are not implemented. No cloud resources
-have been provisioned or service deployed. `gq-crawl` integration and
-real-source approval remain out of scope.
+**Status: research + synthetic catalog lookup/ingestion/publication control.**
+The repository implements process health, anonymous last-known snapshot lookup,
+complete snapshot submission, publication authorization acquisition, and admin
+inspection on local D1. Administrative state changes are not implemented. No
+cloud resources have been provisioned or service deployed. `gq-crawl`
+integration and real-source approval remain out of scope.
 
 ## Direction
 
@@ -51,6 +51,7 @@ Implemented routes:
 | ------ | ---------------------------------------------------------------------- | ------------------------------------------------------------ |
 | GET    | `/`                                                                    | Scaffold metadata                                            |
 | GET    | `/health`                                                              | Process health through an Effect service                     |
+| GET    | `/v1/steam/applications/{steamAppId}`                                  | Anonymous last-known approved English snapshot               |
 | POST   | `/internal/v1/steam/applications/{steamAppId}/ingestion-authorization` | Ingestion-role acquisition of current publication generation |
 | GET    | `/internal/v1/steam/applications/{steamAppId}/publication`             | Admin-role inspection, including absent control              |
 | PUT    | `/internal/v1/steam/applications/{steamAppId}/snapshot`                | Ingestion-role atomic complete-snapshot submission           |
@@ -66,6 +67,16 @@ initializes or changes publication control. No real upstream content,
 publication reason, raw body, or delivery history is stored. See
 [the contract](docs/steam-catalog-contract.md) for response shapes and remaining
 proposed operations.
+
+Public lookup accepts canonical decimal App IDs from 1 through 4294967295,
+without credentials or a generation. It returns only metadata and public
+provenance (`source_url`, `language`, `observed_at`), using one primary D1 query
+that requires both eligible control and an existing snapshot. Missing and
+withdrawn applications have identical `NOT_FOUND` 404s. All catalog responses,
+including failures, are no-store with server-owned request IDs. Lookup never
+fetches upstream content or promises current availability/freshness. No-store
+does not recall previously read responses or consumer-held copies; lifecycle
+transition/race verification remains a separate slice.
 
 Private routes require HTTPS and distinct opaque Worker secrets
 `INGESTION_BEARER_TOKEN` / `PUBLICATION_ADMIN_BEARER_TOKEN`; missing or
@@ -158,8 +169,8 @@ details.
 
 The planned paid service charges for the managed API, infrastructure, maintained
 data, and support—not for the right to use the code commercially. No hosted
-service, pricing, billing, real-source ingestion, or public catalog lookup
-exists.
+service, pricing, billing, or real-source ingestion exists; catalog lookup is
+local and synthetic only.
 
 Modified network-served versions must prominently offer their corresponding
 source to users as required by AGPL section 13. Future SDKs are intended to use

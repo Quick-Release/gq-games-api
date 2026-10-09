@@ -2,10 +2,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // See LICENSE in the repository root.
 
-import { eq } from 'drizzle-orm';
-import { Clock, Context, Effect, Layer, Schema } from 'effect';
+import { and, eq } from 'drizzle-orm';
+import type { EffectDrizzleQueryError } from 'drizzle-orm/effect-core';
+import { Cause, Clock, Context, Effect, Layer, Option, Schema } from 'effect';
+import { SqlError } from 'effect/sql/SqlError';
 import { Database } from '../db/database';
-import { publicationControl } from '../db/schema';
+import { applicationSnapshot, publicationControl } from '../db/schema';
 
 import { CatalogFailure } from './catalog-failure';
 import { validateSnapshot } from './snapshot';
@@ -33,9 +35,130 @@ const snapshotDecisionRow = Schema.Struct({
   current_observed_at: Schema.NullOr(Schema.Number),
 });
 
+// The pinned D1 client wraps every driver failure in SqlError/UnknownError.
+// Recognize only documented transient D1 messages; unknown/permanent failures
+// are 500, never mistaken for retryable unavailability. Inspect but do not retain
+// or log any driver text. No application retry or second query is introduced.
+// https://developers.cloudflare.com/d1/observability/debug-d1/#list-of-d1_errors
+const temporaryReadFailures = new Set([
+  'Network connection lost.',
+  'D1 DB reset because its code was updated.',
+  'Internal error while starting up D1 DB storage caused object to be reset.',
+  'Internal error in D1 DB storage caused object to be reset.',
+  'Cannot resolve D1 DB due to transient issue on remote node.',
+  "Can't read from request stream because client disconnected.",
+  'D1 DB storage operation exceeded timeout which caused object to be reset.',
+  'D1 DB is overloaded. Requests queued for too long.',
+  'D1 DB is overloaded. Too many requests queued.',
+  "D1 DB's isolate exceeded its memory limit and was reset.",
+  'D1 DB exceeded its CPU time limit and was reset.',
+]);
+const lookupQueryFailure = (failure: EffectDrizzleQueryError) => {
+  // Drizzle wraps the SQL failure in an Effect Cause, not a bare SqlError.
+  const error = Cause.isCause(failure.cause)
+    ? Cause.findErrorOption(failure.cause)
+    : Option.none();
+  const cause =
+    Option.isSome(error) && error.value instanceof SqlError
+      ? error.value.reason.cause
+      : undefined;
+  const message =
+    cause instanceof Error
+      ? cause.message
+      : typeof cause === 'string'
+        ? cause
+        : '';
+  const temporary = temporaryReadFailures.has(
+    message.replace(/^D1_ERROR: /, ''),
+  );
+  return new CatalogFailure({
+    code: temporary ? 'SERVICE_UNAVAILABLE' : 'INTERNAL_SERVER_ERROR',
+  });
+};
+
 const makeCatalog = Effect.gen(function* () {
   const db = yield* Database;
   const sql = db.$client;
+
+  const lookupApplication = Effect.fn('Catalog.lookupApplication')(function* (
+    steamAppId: number,
+  ) {
+    // One primary read admits ONLY existing metadata with existing eligible
+    // control. Never split this into a metadata read and an eligibility check,
+    // use Sessions, or fetch a source to fill a missing snapshot.
+    const rows = yield* db
+      .select({
+        steamAppId: applicationSnapshot.steamAppId,
+        title: applicationSnapshot.title,
+        productType: applicationSnapshot.productType,
+        baseAppId: applicationSnapshot.baseAppId,
+        developers: applicationSnapshot.developers,
+        publishers: applicationSnapshot.publishers,
+        supportedOs: applicationSnapshot.supportedOs,
+        releaseStatus: applicationSnapshot.releaseStatus,
+        releaseDateKind: applicationSnapshot.releaseDateKind,
+        releaseDate: applicationSnapshot.releaseDate,
+        releaseWindow: applicationSnapshot.releaseWindow,
+        sourceUrl: applicationSnapshot.sourceUrl,
+        language: applicationSnapshot.language,
+        observedAt: applicationSnapshot.observedAt,
+      })
+      .from(applicationSnapshot)
+      .innerJoin(
+        publicationControl,
+        eq(publicationControl.steamAppId, applicationSnapshot.steamAppId),
+      )
+      .where(
+        and(
+          eq(applicationSnapshot.steamAppId, steamAppId),
+          eq(publicationControl.state, 'eligible'),
+        ),
+      )
+      .pipe(Effect.mapError(lookupQueryFailure));
+    const row = rows[0];
+    if (!row) {
+      return yield* Effect.fail(new CatalogFailure({ code: 'NOT_FOUND' }));
+    }
+    const date = yield* Effect.gen(function* () {
+      switch (row.releaseDateKind) {
+        case 'exact':
+          if (row.releaseDate !== null && row.releaseWindow === null) {
+            return { kind: 'exact' as const, date: row.releaseDate };
+          }
+          break;
+        case 'window':
+          if (row.releaseWindow !== null && row.releaseDate === null) {
+            return { kind: 'window' as const, window: row.releaseWindow };
+          }
+          break;
+        case 'unknown':
+          if (row.releaseDate === null && row.releaseWindow === null) {
+            return { kind: 'unknown' as const };
+          }
+      }
+      // A corrupt persisted tag must not invent precision or expose a row.
+      return yield* Effect.fail(
+        new CatalogFailure({ code: 'INTERNAL_SERVER_ERROR' }),
+      );
+    });
+    return {
+      steam_app_id: row.steamAppId,
+      metadata: {
+        title: row.title,
+        product_type: row.productType,
+        base_app_id: row.baseAppId,
+        developers: row.developers,
+        publishers: row.publishers,
+        supported_os: row.supportedOs,
+        release: { status: row.releaseStatus, date },
+      },
+      provenance: {
+        source_url: row.sourceUrl,
+        language: row.language,
+        observed_at: row.observedAt,
+      },
+    };
+  });
 
   const acquireAuthorization = Effect.fn('Catalog.acquireAuthorization')(
     function* (steamAppId: number) {
@@ -267,7 +390,12 @@ const makeCatalog = Effect.gen(function* () {
     }
   });
 
-  return { acquireAuthorization, inspectPublication, submitSnapshot };
+  return {
+    lookupApplication,
+    acquireAuthorization,
+    inspectPublication,
+    submitSnapshot,
+  };
 });
 
 // A cohesive application boundary, not query choreography exposed to callers.

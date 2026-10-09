@@ -2,18 +2,17 @@
 
 ## Status and scope
 
-**Agreed design; partially implemented under issues #2 and #3.** Authorization
-acquisition POST, publication inspection GET, and complete snapshot PUT now
-exist, backed by separate durable control/snapshot tables and synthetic local
-workerd tests. `/` and process-only `/health` are preserved. Public lookup and
-publication PUT remain unimplemented.
+**Agreed design; partially implemented under issues #2–#4.** Authorization
+acquisition POST, publication inspection GET, complete snapshot PUT, and
+anonymous public lookup GET now exist, backed by separate durable
+control/snapshot tables and synthetic local workerd tests. `/` and process-only
+`/health` are preserved. Publication PUT remains unimplemented.
 
 This contract records the HTTP, payload, and atomic-persistence decisions
-confirmed in the design interview. Issues #2/#3 authorize these three
-operations, reviewed migrations, local configuration, and synthetic local
-verification, not real collection, cloud provisioning, or deployment.
-Descriptions of the remaining operations below are requirements, not claims of
-implemented behavior.
+confirmed in the design interview. Issues #2–#4 authorize these four operations,
+reviewed migrations, local configuration, and synthetic local verification, not
+real collection, cloud provisioning, or deployment. Descriptions of the
+remaining operations below are requirements, not claims of implemented behavior.
 
 The initial consumer task is lookup by Steam App ID. Admit verified Game, Demo,
 and DLC applications; no canonical Game identities, editorial editions, search,
@@ -470,14 +469,15 @@ mocks alone cannot establish D1 concurrency, transaction, or binding behavior.
 
 ### Still gated
 
-Acquisition, inspection, and complete snapshot submission have HTTP/workerd
-coverage. Public lookup and administrative transitions, including their
-withdrawal/reinstatement races and visibility tests above, are still required.
-Synthetic local workerd cannot validate production routing, global latency,
-outages, replica behavior, or revocation of consumer-held copies. Before real
-publication, approve actual source field and retention policies, production
-abuse/rate limits and access budgets, credentials and rotation procedures,
-operational monitoring/recovery, and deployment. The private `gq-crawl` producer
-must agree to and implement acquire-before-collect, clock synchronization,
-source approval, and retry behavior; no private adapter or collection is
-authorized by this document.
+Acquisition, inspection, complete snapshot submission, and anonymous lookup have
+HTTP/workerd coverage. Lookup eligibility is verified with synthetic
+control/snapshot fixture states using one primary joined read. Administrative
+transitions and cross-route withdrawal/reinstatement races and visibility tests
+above are still required. Synthetic local workerd cannot validate production
+routing, global latency, outages, replica behavior, or revocation of
+consumer-held copies. Before real publication, approve actual source field and
+retention policies, production abuse/rate limits and access budgets, credentials
+and rotation procedures, operational monitoring/recovery, and deployment. The
+private `gq-crawl` producer must agree to and implement acquire-before-collect,
+clock synchronization, source approval, and retry behavior; no private adapter
+or collection is authorized by this document.

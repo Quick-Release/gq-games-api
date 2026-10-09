@@ -8,6 +8,7 @@ import { Data } from 'effect';
 // HTTP maps these application codes to statuses; issues use safe field paths.
 export class CatalogFailure extends Data.TaggedError('CatalogFailure')<{
   code:
+    | 'NOT_FOUND'
     | 'PUBLICATION_WITHDRAWN'
     | 'SERVICE_UNAVAILABLE'
     | 'INTERNAL_SERVER_ERROR'

@@ -11,6 +11,7 @@ const prefix = 'https://catalog.example.invalid/internal/v1/steam/applications';
 
 const successfulCatalog = () =>
   Layer.succeed(Catalog, {
+    lookupApplication: () => Effect.die('not used'),
     submitSnapshot: () => Effect.die('not used'),
     acquireAuthorization: (steamAppId: number) =>
       Effect.succeed({
@@ -475,6 +476,7 @@ describe('catalog HTTP boundary', () => {
     'projects only the publication response fields for $0 control',
     async (state) => {
       const catalogLayer = Layer.succeed(Catalog, {
+        lookupApplication: () => Effect.die('not used'),
         submitSnapshot: () => Effect.die('not used'),
         acquireAuthorization: () => Effect.die('not used'),
         inspectPublication: (steamAppId: number) =>
@@ -523,6 +525,7 @@ describe('catalog HTTP boundary', () => {
           ),
         });
         const catalogLayer = Layer.succeed(Catalog, {
+          lookupApplication: () => Effect.die('not used'),
           submitSnapshot: () => Effect.die('not used'),
           acquireAuthorization: () => Effect.fail(failure),
           inspectPublication: () => Effect.fail(failure),
@@ -550,6 +553,7 @@ describe('catalog HTTP boundary', () => {
           { code: 'SERVICE_UNAVAILABLE', diagnostic },
         ]) {
           const catalogLayer = Layer.succeed(Catalog, {
+            lookupApplication: () => Effect.die('not used'),
             submitSnapshot: () => Effect.die('not used'),
             acquireAuthorization: () => Effect.die(defect),
             inspectPublication: () => Effect.die(defect),

@@ -46,6 +46,7 @@ const fixture = () => {
     APPROVED_SNAPSHOT_SOURCES: policy,
   };
   const catalogLayer = Layer.succeed(Catalog, {
+    lookupApplication: () => Effect.die('unused'),
     acquireAuthorization: () => Effect.die('unused'),
     inspectPublication: () => Effect.die('unused'),
     submitSnapshot: (
@@ -844,6 +845,7 @@ describe('complete snapshot HTTP boundary (not D1 atomicity evidence)', () => {
     const started = vi.fn();
     const app = createApp({
       catalogLayer: Layer.succeed(Catalog, {
+        lookupApplication: () => Effect.die('unused'),
         acquireAuthorization: () => Effect.die('unused'),
         inspectPublication: () => Effect.die('unused'),
         submitSnapshot: () =>
@@ -885,6 +887,7 @@ describe('complete snapshot HTTP boundary (not D1 atomicity evidence)', () => {
     try {
       const broken = createApp({
         catalogLayer: Layer.succeed(Catalog, {
+          lookupApplication: () => Effect.die('unused'),
           acquireAuthorization: () => Effect.die('unused'),
           inspectPublication: () => Effect.die('unused'),
           submitSnapshot: () =>
@@ -953,6 +956,7 @@ describe('complete snapshot HTTP boundary (not D1 atomicity evidence)', () => {
     for (const outcome of ['applied', 'unchanged', 'ignored_stale'] as const) {
       const app = createApp({
         catalogLayer: Layer.succeed(Catalog, {
+          lookupApplication: () => Effect.die('unused'),
           acquireAuthorization: () => Effect.die('unused'),
           inspectPublication: () => Effect.die('unused'),
           submitSnapshot: (id: number) =>
@@ -991,6 +995,7 @@ describe('complete snapshot HTTP boundary (not D1 atomicity evidence)', () => {
     ] as const) {
       const app = createApp({
         catalogLayer: Layer.succeed(Catalog, {
+          lookupApplication: () => Effect.die('unused'),
           acquireAuthorization: () => Effect.die('unused'),
           inspectPublication: () => Effect.die('unused'),
           submitSnapshot: () =>

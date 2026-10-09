@@ -20,6 +20,7 @@ export type CatalogHttpOptions = {
 };
 
 const prefix = '/internal/v1/steam/applications';
+const publicPrefix = '/v1/steam/applications';
 const maximumBodyBytes = 32 * 1024;
 
 type ErrorStatus = 400 | 401 | 403 | 404 | 409 | 413 | 415 | 422 | 500 | 503;
@@ -207,6 +208,9 @@ const runCatalog = async <A>(
 ) => {
   // Construct/provide the production layers per request, never in the bundle's
   // global scope. Overrides bypass D1 entirely for Node HTTP boundary tests.
+  if (!options.catalogLayer && !c.env?.DB) {
+    return catalogError(c, 503, 'SERVICE_UNAVAILABLE');
+  }
   const layer =
     options.catalogLayer ??
     Catalog.layer.pipe(Layer.provide(Database.layer(c.env.DB)));
@@ -218,6 +222,8 @@ const runCatalog = async <A>(
   const failure = Cause.findErrorOption(exit.cause);
   if (Option.isSome(failure) && failure.value instanceof CatalogFailure) {
     switch (failure.value.code) {
+      case 'NOT_FOUND':
+        return catalogError(c, 404, 'NOT_FOUND');
       case 'PUBLICATION_WITHDRAWN':
       case 'PUBLICATION_GENERATION_MISMATCH':
       case 'SNAPSHOT_CONFLICT':
@@ -250,8 +256,53 @@ export const mountCatalog = (
     c.header('Cache-Control', 'no-store');
     await next();
   };
-  app.use(prefix, transport);
-  app.use(`${prefix}/*`, transport);
+  for (const path of [prefix, publicPrefix]) {
+    app.use(path, transport);
+    app.use(`${path}/*`, transport);
+  }
+
+  app.get(`${publicPrefix}/:steamAppId`, async (c) => {
+    const steamAppId = parseAppId(c.req.param('steamAppId'));
+    if (steamAppId === undefined) return catalogError(c, 400, 'INVALID_APP_ID');
+
+    return runCatalog(
+      c,
+      options,
+      Effect.gen(function* () {
+        const catalog = yield* Catalog;
+        const { steam_app_id, metadata, provenance } =
+          yield* catalog.lookupApplication(steamAppId);
+        // Whitelist at every public object boundary, not just the database row.
+        // Private delivery/control fields never belong in this representation.
+        const date = metadata.release.date;
+        return {
+          steam_app_id,
+          metadata: {
+            title: metadata.title,
+            product_type: metadata.product_type,
+            base_app_id: metadata.base_app_id,
+            developers: metadata.developers,
+            publishers: metadata.publishers,
+            supported_os: metadata.supported_os,
+            release: {
+              status: metadata.release.status,
+              date:
+                date.kind === 'exact'
+                  ? { kind: date.kind, date: date.date }
+                  : date.kind === 'window'
+                    ? { kind: date.kind, window: date.window }
+                    : { kind: date.kind },
+            },
+          },
+          provenance: {
+            source_url: provenance.source_url,
+            language: provenance.language,
+            observed_at: provenance.observed_at,
+          },
+        };
+      }),
+    );
+  });
 
   app.post(`${prefix}/:steamAppId/ingestion-authorization`, async (c) => {
     const denied = authenticate(c, 'ingestion', options);

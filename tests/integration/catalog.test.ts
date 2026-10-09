@@ -126,7 +126,7 @@ const availablePort = async () => {
   return address.port;
 };
 
-it('persists generation-fenced full snapshots, classifies gated races, and rolls back native D1 batches across workerd restarts', async () => {
+it('persists generation-fenced snapshots, serves only eligible last-known applications, and rolls back native D1 batches across workerd restarts', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'gq-catalog-d1-'));
   const migrations = join(directory, 'migrations');
   const home = join(directory, 'home');
@@ -170,6 +170,55 @@ it('persists generation-fenced full snapshots, classifies gated races, and rolls
       authorization,
       strict,
     )(await json(`/fixture/acquire/${id}?millis=${millis}`));
+  const lookup = async (id: number) => json(`/fixture/lookup/${id}`);
+  const countedLookup = async (id: number, expected: unknown) => {
+    const measured = Schema.decodeUnknownSync(
+      Schema.Struct({
+        result: Schema.Unknown,
+        counts: Schema.Struct({
+          prepared: Schema.Number,
+          executed: Schema.Number,
+          batches: Schema.Number,
+          execs: Schema.Number,
+          sessions: Schema.Number,
+        }),
+      }),
+      strict,
+    )(await json(`/fixture/lookup-counted/${id}`));
+    expect(measured.result).toEqual(expected);
+    // Counts come from actual prepare/execution calls forwarded to workerd.
+    // No stubbed result, SQL inspection, or second control/snapshot read.
+    expect(measured.counts).toEqual({
+      prepared: 1,
+      executed: 1,
+      batches: 0,
+      execs: 0,
+      sessions: 0,
+    });
+  };
+  const publicHttp = async (path: string) => {
+    const response = await fetch(`${url}${path}`, {
+      // Intentionally no bearer credential or publication generation.
+      headers: { 'X-Request-ID': 'caller-public-id' },
+      signal: AbortSignal.timeout(10_000),
+    });
+    expect(response.headers.get('Cache-Control')).toBe('no-store');
+    expect(response.headers.get('Content-Type')).toContain('application/json');
+    const requestId = response.headers.get('X-Request-ID');
+    expect(requestId).toBeTruthy();
+    expect(requestId).not.toBe('caller-public-id');
+    const text = await response.text();
+    for (const secret of secrets) {
+      expect(
+        text.includes(secret),
+        'No credential in public HTTP response',
+      ).toBe(false);
+    }
+    const body: unknown = JSON.parse(text);
+    return { status: response.status, requestId, body };
+  };
+  const lookupHttp = async (id: number | string) =>
+    publicHttp(`/v1/steam/applications/${id}`);
   const auditSnapshot = async (id: number) =>
     Schema.decodeUnknownSync(
       snapshotAudit,
@@ -260,6 +309,16 @@ it('persists generation-fenced full snapshots, classifies gated races, and rolls
       'insert into steam_application_publication',
       'insert into steam_application_snapshot',
       'Synthetic Café Demo',
+      'Synthetic Ineligible Game',
+      'Synthetic Announced Game',
+      'Synthetic Unlinked Demo',
+      'Synthetic Released DLC',
+      'synthetic-ineligible-snapshot',
+      'synthetic-public-game',
+      'synthetic-public-demo',
+      'synthetic-public-dlc',
+      'synthetic-lookup-withdrawn-generation',
+      'synthetic-lookup-empty-generation',
       'synthetic-delivery-1',
       'https://catalog.example.invalid/apps/1001',
       'select steam_app_id',
@@ -417,6 +476,39 @@ it('persists generation-fenced full snapshots, classifies gated races, and rolls
       });
       expect(await inspect(2002)).toEqual(withdrawn);
 
+      expect(await json('/fixture/seed-lookup', { method: 'POST' })).toEqual({
+        seeded: true,
+      });
+      expect((await inspect(6000)).state).toBe('uninitialized');
+      expect(await auditSnapshot(6000)).toBeNull();
+      expect((await inspect(6001)).state).toBe('uninitialized');
+      expect((await inspect(6002)).state).toBe('withdrawn');
+      for (const id of [6001, 6002]) {
+        expect(await auditSnapshot(id)).toMatchObject({
+          steamAppId: id,
+          title: 'Synthetic Ineligible Game',
+          eventId: 'synthetic-ineligible-snapshot',
+        });
+      }
+      expect((await inspect(6003)).state).toBe('eligible');
+      expect(await auditSnapshot(6003)).toBeNull();
+      const notFoundIds = [6000, 6001, 6002, 6003, 2002];
+      const missingRequestIds = new Set<string | null>();
+      for (const id of notFoundIds) {
+        expect(await lookup(id)).toEqual({ error: { code: 'NOT_FOUND' } });
+        await countedLookup(id, { error: { code: 'NOT_FOUND' } });
+        const missing = await lookupHttp(id);
+        expect(missing.status).toBe(404);
+        // Identical complete envelopes for absent control, orphan snapshot,
+        // eligible without snapshot, withdrawn with/without snapshot. Only the
+        // fresh server correlation ID differs; all have no-store headers.
+        expect(missing.body).toEqual({
+          error: { code: 'NOT_FOUND', request_id: missing.requestId },
+        });
+        expect(missingRequestIds.has(missing.requestId)).toBe(false);
+        missingRequestIds.add(missing.requestId);
+      }
+
       // Snapshot submissions never initialize or rewrite publication control.
       const initial = syntheticSnapshot();
       expect(await auditSnapshot(1001)).toBeNull();
@@ -424,6 +516,31 @@ it('persists generation-fenced full snapshots, classifies gated races, and rolls
         applied(1001, 1_700_000_010),
       );
       expect(await auditSnapshot(1001)).toEqual(initialSnapshotRow);
+      const initialPublicApplication = {
+        steam_app_id: 1001,
+        metadata: {
+          title: 'Synthetic Café Demo',
+          product_type: 'demo',
+          base_app_id: 9001,
+          developers: ['Synthetic Developer A', 'Synthetic Developer B'],
+          publishers: ['Synthetic Publisher A', 'Synthetic Publisher B'],
+          supported_os: ['linux', 'macos', 'windows'],
+          release: {
+            status: 'upcoming',
+            date: { kind: 'exact', date: '2030-04-12' },
+          },
+        },
+        provenance: {
+          source_url: 'https://catalog.example.invalid/apps/1001',
+          language: 'en',
+          observed_at: 1_700_000_010,
+        },
+      };
+      expect(await lookup(1001)).toEqual(initialPublicApplication);
+      await countedLookup(1001, initialPublicApplication);
+      const initialPublic = await lookupHttp(1001);
+      expect(initialPublic.status).toBe(200);
+      expect(initialPublic.body).toEqual({ data: initialPublicApplication });
       const unchangedControl = await inspect(1001);
       const preserve = async (
         snapshot: unknown,
@@ -436,6 +553,7 @@ it('persists generation-fenced full snapshots, classifies gated races, and rolls
         );
         expect(await auditSnapshot(1001)).toEqual(initialSnapshotRow);
         expect(await inspect(1001)).toEqual(unchangedControl);
+        expect(await lookup(1001)).toEqual(initialPublicApplication);
       };
       await preserve(
         {
@@ -702,6 +820,23 @@ it('persists generation-fenced full snapshots, classifies gated races, and rolls
         observedAt: 1_700_000_011,
       };
       expect(await auditSnapshot(1001)).toEqual(clearedRow);
+      expect(await lookup(1001)).toEqual({
+        steam_app_id: 1001,
+        metadata: {
+          title: 'Synthetic Unknown Game',
+          product_type: 'game',
+          base_app_id: null,
+          developers: null,
+          publishers: null,
+          supported_os: null,
+          release: { status: 'unknown', date: { kind: 'unknown' } },
+        },
+        provenance: {
+          source_url: 'https://catalog.example.invalid/apps/1001-alternate',
+          language: 'en',
+          observed_at: 1_700_000_011,
+        },
+      });
       expect(await inspect(1001)).toEqual(unchangedControl);
       for (const difference of [
         { developers: [] },
@@ -745,6 +880,30 @@ it('persists generation-fenced full snapshots, classifies gated races, and rolls
         extractorVersion: 'synthetic-v2',
       };
       expect(await auditSnapshot(1001)).toEqual(windowRow);
+      const windowPublicApplication = {
+        steam_app_id: 1001,
+        metadata: {
+          title: 'Synthetic Café Demo',
+          product_type: 'demo',
+          base_app_id: 9001,
+          developers: ['Synthetic Developer A', 'Synthetic Developer B'],
+          publishers: ['Synthetic Publisher A', 'Synthetic Publisher B'],
+          supported_os: ['linux', 'macos', 'windows'],
+          release: {
+            status: 'upcoming',
+            date: { kind: 'window', window: 'Q4 2030' },
+          },
+        },
+        provenance: {
+          source_url: 'https://catalog.example.invalid/apps/1001',
+          language: 'en',
+          observed_at: 1_700_000_012,
+        },
+      };
+      await countedLookup(1001, windowPublicApplication);
+      const lastKnown = await lookupHttp(1001);
+      expect(lastKnown.status).toBe(200);
+      expect(lastKnown.body).toEqual({ data: windowPublicApplication });
       expect(
         await submit(1001, first.generation, {
           ...windowed,
@@ -1478,6 +1637,31 @@ it('persists generation-fenced full snapshots, classifies gated races, and rolls
         observedAt: posted.minimum_observed_at,
       };
       expect(await auditSnapshot(5001)).toEqual(httpInitialRow);
+      const httpPublicApplication = {
+        steam_app_id: 5001,
+        metadata: {
+          title: 'Synthetic Café Demo',
+          product_type: 'demo',
+          base_app_id: 9001,
+          developers: ['Synthetic Developer A', 'Synthetic Developer B'],
+          publishers: ['Synthetic Publisher A', 'Synthetic Publisher B'],
+          supported_os: ['linux', 'macos', 'windows'],
+          release: {
+            status: 'upcoming',
+            date: { kind: 'exact', date: '2030-04-12' },
+          },
+        },
+        provenance: {
+          source_url: 'https://catalog.example.invalid/apps/1001',
+          language: 'en',
+          observed_at: posted.minimum_observed_at,
+        },
+      };
+      const lookedUp = await lookupHttp(5001);
+      expect(lookedUp.status).toBe(200);
+      expect(lookedUp.body).toEqual({ data: httpPublicApplication });
+      expect(lookedUp.requestId).not.toBe(put.requestId);
+      expect(await lookup(5001)).toEqual(httpPublicApplication);
       const noOp = await http(
         '/5001/snapshot',
         ingestion,
@@ -1641,6 +1825,260 @@ it('persists generation-fenced full snapshots, classifies gated races, and rolls
         },
       });
       expect(await auditSnapshot(5001)).toEqual(httpNewerRow);
+      const lastKnownHttpApplication = {
+        steam_app_id: 5001,
+        metadata: {
+          title: 'Synthetic Café Demo',
+          product_type: 'demo',
+          base_app_id: 9001,
+          developers: ['Synthetic Developer A', 'Synthetic Developer B'],
+          publishers: ['Synthetic Publisher A', 'Synthetic Publisher B'],
+          supported_os: ['linux', 'macos', 'windows'],
+          release: {
+            status: 'upcoming',
+            date: { kind: 'exact', date: '2030-04-12' },
+          },
+        },
+        provenance: {
+          source_url: 'https://catalog.example.invalid/apps/1001',
+          language: 'en',
+          observed_at: posted.minimum_observed_at + 1,
+        },
+      };
+      const afterStale = await lookupHttp(5001);
+      expect(afterStale.status).toBe(200);
+      expect(afterStale.body).toEqual({ data: lastKnownHttpApplication });
+      await countedLookup(5001, lastKnownHttpApplication);
+
+      // These public expectations are independent full literals, not input
+      // projections, storage rows, production schemas, or serialization helpers.
+      // A small future allowance keeps the fixed observations above the acquired
+      // floor; it does not claim a real source observation or freshness promise.
+      const publicObservedAt = Math.floor(Date.now() / 1000) + 60;
+      const publicCases = [
+        {
+          id: 5101,
+          snapshot: {
+            event_id: 'synthetic-public-game',
+            metadata: {
+              title: 'Synthetic Announced Game',
+              product_type: 'game',
+              base_app_id: null,
+              developers: ['Synthetic Developer Z', 'Synthetic Developer A'],
+              publishers: [],
+              supported_os: null,
+              release: {
+                status: 'upcoming',
+                date: { kind: 'exact', date: '2000-02-29' },
+              },
+            },
+            provenance: {
+              source_url: 'https://catalog.example.invalid/apps/1001',
+              language: 'en',
+              observed_at: publicObservedAt,
+              extractor_version: 'synthetic-v1',
+            },
+          },
+          expected: {
+            steam_app_id: 5101,
+            metadata: {
+              title: 'Synthetic Announced Game',
+              product_type: 'game',
+              base_app_id: null,
+              developers: ['Synthetic Developer Z', 'Synthetic Developer A'],
+              publishers: [],
+              supported_os: null,
+              release: {
+                status: 'upcoming',
+                date: { kind: 'exact', date: '2000-02-29' },
+              },
+            },
+            provenance: {
+              source_url: 'https://catalog.example.invalid/apps/1001',
+              language: 'en',
+              observed_at: publicObservedAt,
+            },
+          },
+        },
+        {
+          id: 5102,
+          snapshot: {
+            event_id: 'synthetic-public-demo',
+            metadata: {
+              title: 'Synthetic Unlinked Demo',
+              product_type: 'demo',
+              base_app_id: null,
+              developers: [],
+              publishers: null,
+              supported_os: [],
+              release: { status: 'unknown', date: { kind: 'unknown' } },
+            },
+            provenance: {
+              source_url: 'https://catalog.example.invalid/apps/1001',
+              language: 'en',
+              observed_at: publicObservedAt,
+              extractor_version: 'synthetic-v1',
+            },
+          },
+          expected: {
+            steam_app_id: 5102,
+            metadata: {
+              title: 'Synthetic Unlinked Demo',
+              product_type: 'demo',
+              base_app_id: null,
+              developers: [],
+              publishers: null,
+              supported_os: [],
+              release: { status: 'unknown', date: { kind: 'unknown' } },
+            },
+            provenance: {
+              source_url: 'https://catalog.example.invalid/apps/1001',
+              language: 'en',
+              observed_at: publicObservedAt,
+            },
+          },
+        },
+        {
+          id: 5103,
+          snapshot: {
+            event_id: 'synthetic-public-dlc',
+            metadata: {
+              title: 'Synthetic Released DLC',
+              product_type: 'dlc',
+              base_app_id: 9101,
+              developers: null,
+              publishers: ['Synthetic Publisher Z', 'Synthetic Publisher A'],
+              supported_os: ['windows', 'linux', 'macos'],
+              release: {
+                status: 'released',
+                date: { kind: 'window', window: 'Q4 2099' },
+              },
+            },
+            provenance: {
+              source_url: 'https://catalog.example.invalid/apps/1001',
+              language: 'en',
+              observed_at: publicObservedAt,
+              extractor_version: 'synthetic-v1',
+            },
+          },
+          expected: {
+            steam_app_id: 5103,
+            metadata: {
+              title: 'Synthetic Released DLC',
+              product_type: 'dlc',
+              base_app_id: 9101,
+              developers: null,
+              publishers: ['Synthetic Publisher Z', 'Synthetic Publisher A'],
+              supported_os: ['linux', 'macos', 'windows'],
+              release: {
+                status: 'released',
+                date: { kind: 'window', window: 'Q4 2099' },
+              },
+            },
+            provenance: {
+              source_url: 'https://catalog.example.invalid/apps/1001',
+              language: 'en',
+              observed_at: publicObservedAt,
+            },
+          },
+        },
+      ];
+      for (const { id, snapshot, expected } of publicCases) {
+        const acquired = await http(
+          `/${id}/ingestion-authorization`,
+          ingestion,
+          'POST',
+        );
+        expect(acquired.status).toBe(200);
+        const permit = Schema.decodeUnknownSync(
+          Schema.Struct({ data: authorization }),
+          strict,
+        )(acquired.body).data;
+        expect(permit.steam_app_id).toBe(id);
+        const unpublished = await lookupHttp(id);
+        expect(unpublished.status).toBe(404);
+        expect(unpublished.body).toEqual({
+          error: { code: 'NOT_FOUND', request_id: unpublished.requestId },
+        });
+        const submitted = await http(
+          `/${id}/snapshot`,
+          ingestion,
+          'PUT',
+          snapshot,
+          permit.generation,
+        );
+        expect(submitted.status).toBe(200);
+        expect(submitted.body).toEqual({ data: applied(id, publicObservedAt) });
+        const published = await lookupHttp(id);
+        expect(published.status).toBe(200);
+        // Exact equality also excludes every internal field, TTL, availability,
+        // stale/current flag, and any other response-only enrichment.
+        expect(published.body).toEqual({ data: expected });
+        expect(await lookup(id)).toEqual(expected);
+        await countedLookup(id, expected);
+        expect(
+          new Set([
+            acquired.requestId,
+            submitted.requestId,
+            published.requestId,
+          ]).size,
+        ).toBe(3);
+      }
+      // No base lookup is required to serve a verified relationship; no target
+      // control/snapshot is implicitly created. Status is never derived from a
+      // passed exact date or a future release window.
+      for (const id of [9001, 9101]) {
+        const uncatalogedBase = await lookupHttp(id);
+        expect(uncatalogedBase.status).toBe(404);
+        expect(uncatalogedBase.body).toEqual({
+          error: { code: 'NOT_FOUND', request_id: uncatalogedBase.requestId },
+        });
+        expect((await inspect(id)).state).toBe('uninitialized');
+      }
+      for (const id of [
+        '0',
+        '4294967296',
+        '01',
+        '-1',
+        '+1',
+        '1.0',
+        '1e3',
+        '0x10',
+        'NaN',
+        '%201',
+        '1%20',
+      ]) {
+        const malformed = await lookupHttp(id);
+        expect(malformed.status).toBe(400);
+        expect(malformed.body).toEqual({
+          error: { code: 'INVALID_APP_ID', request_id: malformed.requestId },
+        });
+      }
+      // Valid range endpoints have eligible control but no snapshot, not a
+      // parsing error. They remain anonymous and indistinguishably not found.
+      for (const id of [1, 4294967295]) {
+        const boundary = await lookupHttp(id);
+        expect(boundary.status).toBe(404);
+        expect(boundary.body).toEqual({
+          error: { code: 'NOT_FOUND', request_id: boundary.requestId },
+        });
+      }
+      expect(await json('/fixture/lookup-fail/5001')).toEqual({
+        error: { code: 'INTERNAL_SERVER_ERROR' },
+      });
+      const failedLookup = await publicHttp('/fixture/http-lookup-failure');
+      expect(failedLookup.status).toBe(500);
+      expect(failedLookup.body).toEqual({
+        error: {
+          code: 'INTERNAL_SERVER_ERROR',
+          request_id: failedLookup.requestId,
+        },
+      });
+      const afterLookupFailure = await lookupHttp(5001);
+      expect(afterLookupFailure.status).toBe(200);
+      expect(afterLookupFailure.body).toEqual({
+        data: lastKnownHttpApplication,
+      });
 
       const denial = await http(
         '/2002/ingestion-authorization',
@@ -1683,17 +2121,24 @@ it('persists generation-fenced full snapshots, classifies gated races, and rolls
         history: [{ count: 3 }],
       });
       return {
+        publicApplications: [
+          windowPublicApplication,
+          lastKnownHttpApplication,
+          ...publicCases.map(({ expected }) => expected),
+        ],
+        notFoundIds,
         controls: await Promise.all(
           [
             1, 1001, 1002, 1003, 1004, 2001, 2002, 3001, 3002, 3101, 3102, 3201,
             3202, 4001, 4101, 4201, 4202, 4203, 4204, 4205, 4206, 4207, 4208,
-            4209, 5001, 4294967295,
+            4209, 5001, 5101, 5102, 5103, 6000, 6001, 6002, 6003, 4294967295,
           ].map(inspect),
         ),
         snapshots: await Promise.all(
           [
             1001, 1002, 1003, 1004, 2002, 3101, 3102, 3201, 3202, 4101, 4201,
-            4202, 4203, 4204, 4205, 4206, 4207, 4208, 4209, 5001,
+            4202, 4203, 4204, 4205, 4206, 4207, 4208, 4209, 5001, 5101, 5102,
+            5103, 6000, 6001, 6002, 6003,
           ].map(async (id) => ({ id, snapshot: await auditSnapshot(id) })),
         ),
       };
@@ -1701,6 +2146,19 @@ it('persists generation-fenced full snapshots, classifies gated races, and rolls
 
     // New workerd/Alchemy process, identical local D1 storage. No reseeding.
     await withWorker(async () => {
+      for (const application of persisted.publicApplications) {
+        const restarted = await lookupHttp(application.steam_app_id);
+        expect(restarted.status).toBe(200);
+        expect(restarted.body).toEqual({ data: application });
+        await countedLookup(application.steam_app_id, application);
+      }
+      for (const id of persisted.notFoundIds) {
+        const restarted = await lookupHttp(id);
+        expect(restarted.status).toBe(404);
+        expect(restarted.body).toEqual({
+          error: { code: 'NOT_FOUND', request_id: restarted.requestId },
+        });
+      }
       for (const { id, snapshot } of persisted.snapshots) {
         expect(await auditSnapshot(id)).toEqual(snapshot);
       }

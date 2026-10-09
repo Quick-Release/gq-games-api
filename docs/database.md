@@ -24,9 +24,9 @@
   The App ID primary key is the only index; base targets need not exist. No raw
   payload or delivery archive exists.
 - `src/services/catalog.ts` supplies the cohesive Effect `Catalog` service for
-  authorization acquisition, publication inspection, and snapshot submission.
-  Hono supplies Catalog and Database layers per request. Health remains
-  process-only; lookup and administrative transitions are not implemented.
+  anonymous lookup, authorization acquisition, publication inspection, and
+  snapshot submission. Hono supplies Catalog and Database layers per request.
+  Health remains process-only; administrative transitions are not implemented.
 
 ORM and Kit are both pinned to **`1.0.0-rc.5-ab785fc`**, the exact optional-peer
 version expected by Alchemy **`2.0.0-beta.81`**. The D1 SQL client is pinned to
@@ -65,11 +65,17 @@ parameters, not string concatenation or `sql.raw` with untrusted input.
 The driver reports SQL failures through `EffectDrizzleQueryError`; service code
 should map expected failures deliberately. Do not serialize SQL, parameters, or
 underlying errors into HTTP responses. The Hono error boundary returns a generic
-JSON 500 and never logs raw exceptions. Catalog SQL failures become a safe
-`SERVICE_UNAVAILABLE` code, without driver details. D1 transactions and
-streaming queries are not supported by this client; do not assume SQLite's
-transaction API is available. Assess D1's atomic batch capabilities when adding
-multi-statement operations.
+JSON 500 and never logs raw exceptions. Acquisition/submission/inspection SQL
+failures become a safe `SERVICE_UNAVAILABLE` code, without driver details.
+Lookup recognizes documented transient D1 read errors as `SERVICE_UNAVAILABLE`;
+unknown/permanent query errors become `INTERNAL_SERVER_ERROR`, without retaining
+or logging driver text. Missing HTTP database bindings return 503. The pinned
+client wraps all D1 failures as UnknownError, so this narrow classification uses
+[documented D1 messages](https://developers.cloudflare.com/d1/observability/debug-d1/#list-of-d1_errors),
+not an assumed typed driver distinction. Node tests check the wrapping/mapping,
+not real outage behavior. D1 transactions and streaming queries are not
+supported by this client; do not assume SQLite's transaction API is available.
+Assess D1's atomic batch capabilities when adding multi-statement operations.
 
 ### Atomic authorization acquisition
 
@@ -103,6 +109,19 @@ lexicographically canonical. The pre-state result captures the response
 outcome/time, so no post-commit read can reclassify it. Success waits for the
 complete batch commit; a later fixture-injected SQL failure rolls back insertion
 or replacement. Submission never initializes or changes control.
+
+### Atomic public lookup eligibility
+
+`Catalog.lookupApplication` performs one parameterized primary SELECT joining
+snapshot and publication control by App ID and filtering `state = 'eligible'`.
+It selects only public columns and reconstructs metadata, strict tagged dates,
+and the three public provenance fields. No control check or second read can
+interleave with the snapshot read. Orphan metadata, absent snapshots, eligible
+control without metadata, and withdrawn control all produce `NOT_FOUND`. No
+Sessions, replicas, cache, TTL, inferred release state, or upstream fetch is
+introduced. The observation is last-known, not a freshness guarantee. Previously
+read/in-flight responses and consumer-held copies cannot be recalled; transition
+and lifecycle visibility races are not claimed by this slice.
 
 `/health` still reports process health only and never queries D1.
 
@@ -155,14 +174,16 @@ schemas, migrations, seeds, or fixtures.
   stale/equal/conflict preservation, generation/floor/source rejection,
   coordinated competing deliveries, captured outcomes, and real native batch
   rollback from a fixture-only later failing statement. Representative
-  Hono-to-Effect-to-D1 requests use ephemeral private credentials. Restart
-  checks persistent control and Alchemy migration history without replay. All
-  state, storage, migration copies, logs, and home/config directories are
-  temporary and cleaned up; no Cloudflare credentials or second migration
-  executor are involved.
+  Hono-to-Effect-to-D1 requests use ephemeral private credentials. Anonymous
+  lookup flows verify full public representations and service eligibility
+  against synthetic missing/eligible/withdrawn fixture states, including
+  snapshots without eligible control. Restart checks persistent control and
+  Alchemy migration history without replay. All state, storage, migration
+  copies, logs, and home/config directories are temporary and cleaned up; no
+  Cloudflare credentials or second migration executor are involved.
 - Local workerd evidence is not production routing, replica, latency, outage,
-  real-source rights, or deployment evidence. Public lookup and administrative
-  transitions are not implemented or tested by this slice.
+  real-source rights, or deployment evidence. Administrative transitions and
+  cross-route lifecycle races remain unimplemented and untested by this slice.
 - CI runs both suites, migration checks, and the offline Worker build without
   Cloudflare credentials. The integration fixture rejects non-dev execution; it
   is not a deployment target.
