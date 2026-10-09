@@ -11,6 +11,7 @@ const prefix = 'https://catalog.example.invalid/internal/v1/steam/applications';
 
 const successfulCatalog = () =>
   Layer.succeed(Catalog, {
+    submitSnapshot: () => Effect.die('not used'),
     acquireAuthorization: (steamAppId: number) =>
       Effect.succeed({
         steam_app_id: steamAppId,
@@ -474,6 +475,7 @@ describe('catalog HTTP boundary', () => {
     'projects only the publication response fields for $0 control',
     async (state) => {
       const catalogLayer = Layer.succeed(Catalog, {
+        submitSnapshot: () => Effect.die('not used'),
         acquireAuthorization: () => Effect.die('not used'),
         inspectPublication: (steamAppId: number) =>
           Effect.succeed({
@@ -521,6 +523,7 @@ describe('catalog HTTP boundary', () => {
           ),
         });
         const catalogLayer = Layer.succeed(Catalog, {
+          submitSnapshot: () => Effect.die('not used'),
           acquireAuthorization: () => Effect.fail(failure),
           inspectPublication: () => Effect.fail(failure),
         });
@@ -547,6 +550,7 @@ describe('catalog HTTP boundary', () => {
           { code: 'SERVICE_UNAVAILABLE', diagnostic },
         ]) {
           const catalogLayer = Layer.succeed(Catalog, {
+            submitSnapshot: () => Effect.die('not used'),
             acquireAuthorization: () => Effect.die(defect),
             inspectPublication: () => Effect.die(defect),
           });
@@ -606,7 +610,7 @@ describe('catalog HTTP boundary', () => {
     for (const { path, method } of [
       { path: '/1001/publication', method: 'PUT' },
       { path: '/1001/ingestion-authorization', method: 'GET' },
-      { path: '/1001/snapshot', method: 'PUT' },
+      { path: '/1001/snapshot', method: 'GET' },
       { path: '/1001/missing', method: 'GET' },
       { path: '', method: 'GET' },
     ]) {

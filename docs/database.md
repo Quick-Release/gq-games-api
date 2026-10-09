@@ -10,15 +10,23 @@
 - `src/db/database.ts` exposes an Effect `Database` service using Drizzle's
   native `effect-d1` driver and `@effect/sql-d1`. Queries are Effects, not
   promises wrapped in application-specific adapters.
-- `src/db/schema.ts` declares only `steam_application_publication`: App ID,
+- `src/db/schema.ts` declares `steam_application_publication`: App ID,
   eligible/withdrawn state, opaque generation, and integer Unix-second issuance
   time. Checks enforce the App ID range, two stored states, nonempty generation,
-  and nonnegative integer timestamp. Uninitialized control is absence. No
-  snapshots, source content, reasons, or delivery history are retained.
+  and nonnegative integer timestamp. Uninitialized control is absence. No source
+  content, reasons, or delivery history are retained in control.
+- `steam_application_snapshot` stores one complete deletable observation:
+  explicit identity, base link, release tags/date/window, provenance, and
+  accepted event columns. Ordered credits and canonical OS subsets use nullable
+  JSON arrays; null and empty remain distinct. Free-text scalar columns use JSON
+  string encoding to preserve decoded Unicode spelling (including escaped lone
+  UTF-16 surrogates) across the UTF-8 D1 binding, not arbitrary payload storage.
+  The App ID primary key is the only index; base targets need not exist. No raw
+  payload or delivery archive exists.
 - `src/services/catalog.ts` supplies the cohesive Effect `Catalog` service for
-  authorization acquisition and publication inspection. Hono supplies Catalog
-  and Database layers per request. Only those two private catalog operations
-  exist; health remains process-only.
+  authorization acquisition, publication inspection, and snapshot submission.
+  Hono supplies Catalog and Database layers per request. Health remains
+  process-only; lookup and administrative transitions are not implemented.
 
 ORM and Kit are both pinned to **`1.0.0-rc.5-ab785fc`**, the exact optional-peer
 version expected by Alchemy **`2.0.0-beta.81`**. The D1 SQL client is pinned to
@@ -80,6 +88,22 @@ uninitialized/null representation; it never generates a token. Generation
 issuance uses server cryptographic randomness and the Effect clock. A generation
 is a fence, not a credential, expiry, or proof of collection order.
 
+### Atomic snapshot submission
+
+After strict application validation and exact synthetic source/extractor policy
+matching, one native D1 batch captures the prior control/snapshot decision with
+a SELECT, then performs a guarded complete-snapshot upsert. Both statements are
+inside the ordered primary transaction. Withdrawal, generation mismatch, and
+observation floor checks precede timestamp/equality comparison. The write guard
+repeats the eligibility, generation, floor, and newer-observation requirements;
+business rejections deliberately do not mutate. Equal-time equality compares all
+canonical encoded metadata/provenance columns with null-safe SQL comparisons,
+excluding only the event ID; credits retain order and OS arrays are
+lexicographically canonical. The pre-state result captures the response
+outcome/time, so no post-commit read can reclassify it. Success waits for the
+complete batch commit; a later fixture-injected SQL failure rolls back insertion
+or replacement. Submission never initializes or changes control.
+
 `/health` still reports process health only and never queries D1.
 
 ## Migration ownership
@@ -127,15 +151,18 @@ schemas, migrations, seeds, or fixtures.
 - `pnpm test:integration`: retains the synthetic generated-table CRUD fixture
   and adds a Catalog service fixture using the reviewed application migration.
   Real local workerd exercises absent/existing/withdrawn control, concurrent
-  acquisition, committed captured outcomes, and real native batch rollback from
-  a fixture-only later failing statement. Representative Hono-to-Effect-to-D1
-  requests use ephemeral private credentials. Restart checks persistent control
-  and Alchemy migration history without replay. All state, storage, migration
-  copies, logs, and home/config directories are temporary and cleaned up; no
-  Cloudflare credentials or second migration executor are involved.
+  acquisition, complete snapshot insertion/replacement/null clearing,
+  stale/equal/conflict preservation, generation/floor/source rejection,
+  coordinated competing deliveries, captured outcomes, and real native batch
+  rollback from a fixture-only later failing statement. Representative
+  Hono-to-Effect-to-D1 requests use ephemeral private credentials. Restart
+  checks persistent control and Alchemy migration history without replay. All
+  state, storage, migration copies, logs, and home/config directories are
+  temporary and cleaned up; no Cloudflare credentials or second migration
+  executor are involved.
 - Local workerd evidence is not production routing, replica, latency, outage,
-  real-source rights, or deployment evidence. No snapshots or administrative
-  transitions are implemented or tested by this slice.
+  real-source rights, or deployment evidence. Public lookup and administrative
+  transitions are not implemented or tested by this slice.
 - CI runs both suites, migration checks, and the offline Worker build without
   Cloudflare credentials. The integration fixture rejects non-dev execution; it
   is not a deployment target.

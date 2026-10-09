@@ -3,17 +3,19 @@
 Research-first games API for the Cloudflare ecosystem, built with **Alchemy,
 Effect, Hono, Drizzle, and Vite+**.
 
-**Status: research + synthetic publication control.** The repository implements
-process health and two private Steam Application publication-control operations
-on local D1. Snapshot ingestion, public catalog lookup, and administrative state
-changes are not implemented. No cloud resources have been provisioned or service
-deployed. `gq-crawl` integration and real-source approval remain out of scope.
+**Status: research + synthetic snapshot ingestion/publication control.** The
+repository implements process health, complete snapshot submission, publication
+authorization acquisition, and admin inspection on local D1. Public catalog
+lookup and administrative state changes are not implemented. No cloud resources
+have been provisioned or service deployed. `gq-crawl` integration and
+real-source approval remain out of scope.
 
 ## Direction
 
 - **Cloudflare Workers + D1**: API runtime and declared relational database. D1
-  runs locally with minimal publication control only. Evaluate R2, Queues,
-  Workflows, and caching against actual requirements before provisioning them.
+  runs locally with minimal publication control and complete synthetic
+  snapshots. Evaluate R2, Queues, Workflows, and caching against actual
+  requirements before provisioning them.
 - **Alchemy**: TypeScript infrastructure, local workerd development, Worker
   builds, and eventual deployments.
 - **Effect**: application services, typed failures, schemas, and resource
@@ -51,12 +53,19 @@ Implemented routes:
 | GET    | `/health`                                                              | Process health through an Effect service                     |
 | POST   | `/internal/v1/steam/applications/{steamAppId}/ingestion-authorization` | Ingestion-role acquisition of current publication generation |
 | GET    | `/internal/v1/steam/applications/{steamAppId}/publication`             | Admin-role inspection, including absent control              |
+| PUT    | `/internal/v1/steam/applications/{steamAppId}/snapshot`                | Ingestion-role atomic complete-snapshot submission           |
 
 Acquisition atomically initializes only absent control, preserves existing
 eligible generation/timestamp, and refuses withdrawal. Inspection does not
-initialize control. No snapshot, upstream content, publication reason, or
-history is stored. See [the contract](docs/steam-catalog-contract.md) for
-response shapes and remaining proposed operations.
+initialize control. Snapshot PUT requires the acquired generation unchanged in
+`X-Publication-Generation`, validates one complete English observation, and
+atomically applies a newer snapshot, ignores stale delivery, accepts equal-time
+identical content unchanged, or rejects equal-time conflicts. Explicit nulls
+clear old fields; no-op/rejection preserves the accepted event. Submission never
+initializes or changes publication control. No real upstream content,
+publication reason, raw body, or delivery history is stored. See
+[the contract](docs/steam-catalog-contract.md) for response shapes and remaining
+proposed operations.
 
 Private routes require HTTPS and distinct opaque Worker secrets
 `INGESTION_BEARER_TOKEN` / `PUBLICATION_ADMIN_BEARER_TOKEN`; missing or
@@ -69,6 +78,15 @@ state/rollout plan. Test credentials are ephemeral; only test factory options
 allow insecure local HTTP. The regular local scaffold/health remain usable
 without secrets. Private responses and errors are no-store with server-owned
 request IDs and sanitized envelopes.
+
+Snapshot submission additionally requires `APPROVED_SNAPSHOT_SOURCES`, a JSON
+array of exact `{source_url, extractor_version}` pairs. Empty, malformed, or
+unmatched policy denies submission with `SOURCE_NOT_APPROVED`. This slice admits
+only synthetic HTTPS URLs on `example.invalid` or its subdomains, without
+credentials, query strings, or fragments; it never fetches sources. For example,
+a synthetic policy can pair `https://catalog.example.invalid/apps/1001` with
+`synthetic-v1`. Exact spelling matters. Policy matching is not legal approval.
+Bodies are strict uncompressed UTF-8 JSON, bounded by actual bytes at 32 KiB.
 
 Health reports only this process, not crawler or storage readiness. Missing
 routes return JSON 404s; unexpected failures return a generic JSON 500.
@@ -140,7 +158,8 @@ details.
 
 The planned paid service charges for the managed API, infrastructure, maintained
 data, and support—not for the right to use the code commercially. No hosted
-service, pricing, billing, snapshot ingestion, or public catalog lookup exists.
+service, pricing, billing, real-source ingestion, or public catalog lookup
+exists.
 
 Modified network-served versions must prominently offer their corresponding
 source to users as required by AGPL section 13. Future SDKs are intended to use

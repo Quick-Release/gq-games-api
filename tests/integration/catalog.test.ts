@@ -32,6 +32,83 @@ const race = Schema.Struct({
   results: Schema.Array(Schema.Struct({ authorization, inspection: control })),
 });
 const strict = { onExcessProperty: 'error' } as const;
+const snapshotOutcome = Schema.Struct({
+  steam_app_id: Schema.Number,
+  outcome: Schema.Literals(['applied', 'unchanged', 'ignored_stale']),
+  current_observed_at: Schema.Number,
+});
+const snapshotFailure = Schema.Struct({
+  error: Schema.Struct({ code: Schema.String }),
+});
+const snapshotRace = Schema.Struct({
+  arrivals: Schema.Number,
+  results: Schema.Array(Schema.Union([snapshotOutcome, snapshotFailure])),
+});
+const snapshotAudit = Schema.Struct({
+  snapshot: Schema.NullOr(
+    Schema.Struct({
+      steamAppId: Schema.Number,
+      eventId: Schema.String,
+      title: Schema.String,
+      productType: Schema.Literals(['game', 'demo', 'dlc']),
+      baseAppId: Schema.NullOr(Schema.Number),
+      developers: Schema.NullOr(Schema.Array(Schema.String)),
+      publishers: Schema.NullOr(Schema.Array(Schema.String)),
+      supportedOs: Schema.NullOr(Schema.Array(Schema.String)),
+      releaseStatus: Schema.Literals(['upcoming', 'released', 'unknown']),
+      releaseDateKind: Schema.Literals(['exact', 'window', 'unknown']),
+      releaseDate: Schema.NullOr(Schema.String),
+      releaseWindow: Schema.NullOr(Schema.String),
+      sourceUrl: Schema.String,
+      language: Schema.Literal('en'),
+      observedAt: Schema.Number,
+      extractorVersion: Schema.String,
+    }),
+  ),
+});
+const syntheticSnapshot = (
+  observedAt = 1_700_000_010,
+  eventId = 'synthetic-delivery-1',
+) => ({
+  event_id: eventId,
+  metadata: {
+    title: 'Synthetic Café Demo',
+    product_type: 'demo',
+    base_app_id: 9001,
+    developers: ['Synthetic Developer A', 'Synthetic Developer B'],
+    publishers: ['Synthetic Publisher A', 'Synthetic Publisher B'],
+    supported_os: ['windows', 'macos', 'linux'],
+    release: {
+      status: 'upcoming',
+      date: { kind: 'exact', date: '2030-04-12' },
+    },
+  },
+  provenance: {
+    source_url: 'https://catalog.example.invalid/apps/1001',
+    language: 'en',
+    observed_at: observedAt,
+    extractor_version: 'synthetic-v1',
+  },
+});
+// Independent expected storage, not a projection through production code.
+const initialSnapshotRow = {
+  steamAppId: 1001,
+  eventId: 'synthetic-delivery-1',
+  title: 'Synthetic Café Demo',
+  productType: 'demo',
+  baseAppId: 9001,
+  developers: ['Synthetic Developer A', 'Synthetic Developer B'],
+  publishers: ['Synthetic Publisher A', 'Synthetic Publisher B'],
+  supportedOs: ['linux', 'macos', 'windows'],
+  releaseStatus: 'upcoming',
+  releaseDateKind: 'exact',
+  releaseDate: '2030-04-12',
+  releaseWindow: null,
+  sourceUrl: 'https://catalog.example.invalid/apps/1001',
+  language: 'en',
+  observedAt: 1_700_000_010,
+  extractorVersion: 'synthetic-v1',
+};
 
 const availablePort = async () => {
   const server = createServer();
@@ -49,7 +126,7 @@ const availablePort = async () => {
   return address.port;
 };
 
-it('commits durable generations, converges gated contenders, and rolls back failed native D1 batches in workerd', async () => {
+it('persists generation-fenced full snapshots, classifies gated races, and rolls back native D1 batches across workerd restarts', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'gq-catalog-d1-'));
   const migrations = join(directory, 'migrations');
   const home = join(directory, 'home');
@@ -93,6 +170,28 @@ it('commits durable generations, converges gated contenders, and rolls back fail
       authorization,
       strict,
     )(await json(`/fixture/acquire/${id}?millis=${millis}`));
+  const auditSnapshot = async (id: number) =>
+    Schema.decodeUnknownSync(
+      snapshotAudit,
+      strict,
+    )(await json(`/fixture/snapshot-audit/${id}`)).snapshot;
+  const submit = async (
+    id: number,
+    generation: unknown,
+    snapshot: unknown,
+    operation = 'submit',
+    millis = 1_700_000_100_999,
+  ) =>
+    json(`/fixture/${operation}/${id}?millis=${millis}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ generation, snapshot }),
+    });
+  const applied = (id: number, observedAt: number) => ({
+    steam_app_id: id,
+    outcome: 'applied',
+    current_observed_at: observedAt,
+  });
   const assertNoCredentialFiles = async () => {
     for (const entry of await readdir(directory, {
       recursive: true,
@@ -159,6 +258,10 @@ it('commits durable generations, converges gated contenders, and rolls back fail
     const prohibitedDiagnostics = [
       'catalog_fixture_missing_table',
       'insert into steam_application_publication',
+      'insert into steam_application_snapshot',
+      'Synthetic Café Demo',
+      'synthetic-delivery-1',
+      'https://catalog.example.invalid/apps/1001',
       'select steam_app_id',
       'D1_ERROR',
       'no such table',
@@ -314,6 +417,686 @@ it('commits durable generations, converges gated contenders, and rolls back fail
       });
       expect(await inspect(2002)).toEqual(withdrawn);
 
+      // Snapshot submissions never initialize or rewrite publication control.
+      const initial = syntheticSnapshot();
+      expect(await auditSnapshot(1001)).toBeNull();
+      expect(await submit(1001, first.generation, initial)).toEqual(
+        applied(1001, 1_700_000_010),
+      );
+      expect(await auditSnapshot(1001)).toEqual(initialSnapshotRow);
+      const unchangedControl = await inspect(1001);
+      const preserve = async (
+        snapshot: unknown,
+        expected: unknown,
+        generation: unknown = first.generation,
+        operation = 'submit',
+      ) => {
+        expect(await submit(1001, generation, snapshot, operation)).toEqual(
+          expected,
+        );
+        expect(await auditSnapshot(1001)).toEqual(initialSnapshotRow);
+        expect(await inspect(1001)).toEqual(unchangedControl);
+      };
+      await preserve(
+        {
+          event_id: 'synthetic-stale',
+          metadata: {
+            title: 'Synthetic Stale Game',
+            product_type: 'game',
+            base_app_id: null,
+            developers: null,
+            publishers: [],
+            supported_os: [],
+            release: { status: 'released', date: { kind: 'unknown' } },
+          },
+          provenance: {
+            ...initial.provenance,
+            observed_at: 1_700_000_009,
+            source_url: 'https://catalog.example.invalid/apps/1001-alternate',
+          },
+        },
+        {
+          steam_app_id: 1001,
+          outcome: 'ignored_stale',
+          current_observed_at: 1_700_000_010,
+        },
+      );
+      await preserve(syntheticSnapshot(1_700_000_010, 'synthetic-redelivery'), {
+        steam_app_id: 1001,
+        outcome: 'unchanged',
+        current_observed_at: 1_700_000_010,
+      });
+      // Equivalent decoded strings, reversed object keys, and OS order all
+      // compare semantically; the accepted event must remain the first event.
+      const representation = JSON.stringify({
+        snapshot: {
+          provenance: Object.fromEntries(
+            Object.entries(initial.provenance).reverse(),
+          ),
+          metadata: Object.fromEntries(
+            Object.entries({
+              ...initial.metadata,
+              supported_os: ['linux', 'windows', 'macos'],
+            }).reverse(),
+          ),
+          event_id: 'synthetic-representation-only',
+        },
+        generation: first.generation,
+      }).replace('Café', 'Caf\\u00e9');
+      expect(
+        await json('/fixture/submit/1001', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: representation,
+        }),
+      ).toEqual({
+        steam_app_id: 1001,
+        outcome: 'unchanged',
+        current_observed_at: 1_700_000_010,
+      });
+      expect(await auditSnapshot(1001)).toEqual(initialSnapshotRow);
+
+      // Every independently mutable equality field, including case, internal
+      // whitespace, Unicode spelling, ordered credits, null and empty sets.
+      const metadataDifferences = [
+        { title: 'Synthetic café Demo' },
+        { title: 'Synthetic  Café Demo' },
+        { title: 'Synthetic Cafe\u0301 Demo' },
+        { product_type: 'dlc' },
+        { base_app_id: 9002 },
+        { base_app_id: null },
+        { developers: ['Synthetic Developer B', 'Synthetic Developer A'] },
+        { developers: ['Synthetic Developer C'] },
+        { developers: null },
+        { developers: [] },
+        { publishers: ['Synthetic Publisher B', 'Synthetic Publisher A'] },
+        { publishers: ['Synthetic Publisher C'] },
+        { publishers: null },
+        { publishers: [] },
+        { supported_os: ['linux'] },
+        { supported_os: null },
+        { supported_os: [] },
+        { release: { ...initial.metadata.release, status: 'released' } },
+        { release: { ...initial.metadata.release, status: 'unknown' } },
+        {
+          release: {
+            status: 'upcoming',
+            date: { kind: 'exact', date: '2030-04-13' },
+          },
+        },
+        {
+          release: {
+            status: 'upcoming',
+            date: { kind: 'window', window: 'Q4 2030' },
+          },
+        },
+        { release: { status: 'upcoming', date: { kind: 'unknown' } } },
+      ];
+      for (const difference of metadataDifferences) {
+        await preserve(
+          {
+            ...initial,
+            event_id: 'synthetic-conflicting-delivery',
+            metadata: { ...initial.metadata, ...difference },
+          },
+          { error: { code: 'SNAPSHOT_CONFLICT' } },
+        );
+      }
+      for (const difference of [
+        { source_url: 'https://catalog.example.invalid/apps/1001-alternate' },
+        { source_url: 'https://CATALOG.example.invalid/apps/1001' },
+        { extractor_version: 'synthetic-v2' },
+      ]) {
+        await preserve(
+          {
+            ...initial,
+            event_id: 'synthetic-provenance-conflict',
+            provenance: { ...initial.provenance, ...difference },
+          },
+          { error: { code: 'SNAPSHOT_CONFLICT' } },
+        );
+      }
+      for (const generation of [undefined, null, '', ' synthetic ', 123]) {
+        // Pass nullish generations explicitly: preserve's default applies to
+        // undefined, so exercise the missing field separately below.
+        if (generation === undefined) {
+          expect(await submit(1001, undefined, initial)).toEqual({
+            error: { code: 'VALIDATION_FAILED' },
+          });
+          expect(await auditSnapshot(1001)).toEqual(initialSnapshotRow);
+        } else {
+          await preserve(
+            initial,
+            { error: { code: 'VALIDATION_FAILED' } },
+            generation,
+          );
+        }
+      }
+      for (const observedAt of [1_700_000_009, 1_700_000_010, 1_700_000_099]) {
+        await preserve(
+          syntheticSnapshot(observedAt),
+          { error: { code: 'PUBLICATION_GENERATION_MISMATCH' } },
+          'synthetic-obsolete-generation',
+        );
+      }
+      await preserve(syntheticSnapshot(1_699_999_999), {
+        error: { code: 'VALIDATION_FAILED' },
+      });
+      await preserve(
+        initial,
+        { error: { code: 'SOURCE_NOT_APPROVED' } },
+        first.generation,
+        'submit-no-policy',
+      );
+      for (const difference of [
+        { source_url: 'https://unapproved.example.invalid/apps/1001' },
+        { extractor_version: 'synthetic-unapproved' },
+      ]) {
+        await preserve(
+          { ...initial, provenance: { ...initial.provenance, ...difference } },
+          { error: { code: 'SOURCE_NOT_APPROVED' } },
+        );
+      }
+      const invalidSnapshots = [
+        null,
+        { ...initial, steam_app_id: 1001 },
+        { ...initial, event_id: ' synthetic-invalid' },
+        { ...initial, metadata: { ...initial.metadata, title: ' ' } },
+        { ...initial, metadata: { ...initial.metadata, reviews: [] } },
+        {
+          ...initial,
+          metadata: {
+            ...initial.metadata,
+            developers: ['Duplicate', 'Duplicate'],
+          },
+        },
+        {
+          ...initial,
+          metadata: {
+            ...initial.metadata,
+            publishers: ['Duplicate', 'Duplicate'],
+          },
+        },
+        {
+          ...initial,
+          metadata: { ...initial.metadata, supported_os: ['linux', 'linux'] },
+        },
+        { ...initial, metadata: { ...initial.metadata, base_app_id: 1001 } },
+        { ...initial, metadata: { ...initial.metadata, product_type: 'game' } },
+        {
+          ...initial,
+          metadata: {
+            ...initial.metadata,
+            release: {
+              status: 'released',
+              date: { kind: 'exact', date: '2030-02-29' },
+            },
+          },
+        },
+        { ...initial, provenance: { ...initial.provenance, language: 'fr' } },
+        {
+          ...initial,
+          provenance: { ...initial.provenance, observed_at: 1_700_000_401 },
+        },
+        {
+          ...initial,
+          provenance: { ...initial.provenance, observed_at: 1_700_000_010.5 },
+        },
+        { ...initial, metadata: { title: initial.metadata.title } },
+      ];
+      for (const invalid of invalidSnapshots) {
+        await preserve(invalid, { error: { code: 'VALIDATION_FAILED' } });
+      }
+      expect(
+        await submit(1003, 'synthetic-absent-generation', initial),
+      ).toEqual({
+        error: { code: 'PUBLICATION_GENERATION_MISMATCH' },
+      });
+      expect(await auditSnapshot(1003)).toBeNull();
+      expect((await inspect(1003)).state).toBe('uninitialized');
+      expect(
+        await submit(
+          2002,
+          withdrawn.generation,
+          syntheticSnapshot(1_700_000_100),
+        ),
+      ).toEqual({ error: { code: 'PUBLICATION_WITHDRAWN' } });
+      expect(await auditSnapshot(2002)).toBeNull();
+      expect(await inspect(2002)).toEqual(withdrawn);
+
+      // Full replacement clears ALL formerly known nullable fields and date
+      // columns, updates event/provenance, and does not touch the generation.
+      const cleared = {
+        ...syntheticSnapshot(1_700_000_011, 'synthetic-cleared'),
+        metadata: {
+          title: 'Synthetic Unknown Game',
+          product_type: 'game',
+          base_app_id: null,
+          developers: null,
+          publishers: null,
+          supported_os: null,
+          release: { status: 'unknown', date: { kind: 'unknown' } },
+        },
+        provenance: {
+          ...initial.provenance,
+          observed_at: 1_700_000_011,
+          source_url: 'https://catalog.example.invalid/apps/1001-alternate',
+        },
+      };
+      expect(await submit(1001, first.generation, cleared)).toEqual(
+        applied(1001, 1_700_000_011),
+      );
+      const clearedRow = {
+        ...initialSnapshotRow,
+        eventId: 'synthetic-cleared',
+        title: 'Synthetic Unknown Game',
+        productType: 'game',
+        baseAppId: null,
+        developers: null,
+        publishers: null,
+        supportedOs: null,
+        releaseStatus: 'unknown',
+        releaseDateKind: 'unknown',
+        releaseDate: null,
+        sourceUrl: 'https://catalog.example.invalid/apps/1001-alternate',
+        observedAt: 1_700_000_011,
+      };
+      expect(await auditSnapshot(1001)).toEqual(clearedRow);
+      expect(await inspect(1001)).toEqual(unchangedControl);
+      for (const difference of [
+        { developers: [] },
+        { publishers: [] },
+        { supported_os: [] },
+      ]) {
+        expect(
+          await submit(1001, first.generation, {
+            ...cleared,
+            metadata: { ...cleared.metadata, ...difference },
+          }),
+        ).toEqual({ error: { code: 'SNAPSHOT_CONFLICT' } });
+        expect(await auditSnapshot(1001)).toEqual(clearedRow);
+      }
+      const windowed = {
+        ...initial,
+        event_id: 'synthetic-window',
+        metadata: {
+          ...initial.metadata,
+          release: {
+            status: 'upcoming',
+            date: { kind: 'window', window: 'Q4 2030' },
+          },
+        },
+        provenance: {
+          ...initial.provenance,
+          observed_at: 1_700_000_012,
+          extractor_version: 'synthetic-v2',
+        },
+      };
+      expect(await submit(1001, first.generation, windowed)).toEqual(
+        applied(1001, 1_700_000_012),
+      );
+      const windowRow = {
+        ...initialSnapshotRow,
+        eventId: 'synthetic-window',
+        observedAt: 1_700_000_012,
+        releaseDateKind: 'window',
+        releaseDate: null,
+        releaseWindow: 'Q4 2030',
+        extractorVersion: 'synthetic-v2',
+      };
+      expect(await auditSnapshot(1001)).toEqual(windowRow);
+      expect(
+        await submit(1001, first.generation, {
+          ...windowed,
+          metadata: {
+            ...windowed.metadata,
+            release: {
+              status: 'upcoming',
+              date: { kind: 'window', window: 'Q1 2031' },
+            },
+          },
+        }),
+      ).toEqual({ error: { code: 'SNAPSHOT_CONFLICT' } });
+      expect(await auditSnapshot(1001)).toEqual(windowRow);
+
+      // D1's raw TEXT binds collapse lone UTF-16 surrogates to U+FFFD and
+      // SQLite string functions stop at NUL. Audit through Drizzle decoding,
+      // not raw SQL or JSON.stringify expectations derived from service code.
+      const unicodeCharacters = [
+        '\ud800',
+        '\ud801',
+        '\udc00',
+        '\udc01',
+        '\ufffd',
+        '\u0000',
+      ];
+      for (const [index, character] of unicodeCharacters.entries()) {
+        const id = 4201 + index;
+        const permit = await acquire(id);
+        const beforeControl = await inspect(id);
+        const scalar = `synthetic-${character}-tail`;
+        const different = `synthetic-${
+          unicodeCharacters[index ^ 1] ?? character
+        }-tail`;
+        const snapshot = {
+          ...initial,
+          event_id: scalar,
+          metadata: {
+            ...initial.metadata,
+            title: scalar,
+            release: {
+              status: 'upcoming',
+              date: { kind: 'window', window: scalar },
+            },
+          },
+          provenance: {
+            ...initial.provenance,
+            extractor_version: scalar,
+          },
+        };
+        const row = {
+          ...initialSnapshotRow,
+          steamAppId: id,
+          eventId: scalar,
+          title: scalar,
+          releaseDateKind: 'window',
+          releaseDate: null,
+          releaseWindow: scalar,
+          extractorVersion: scalar,
+        };
+        expect(await submit(id, permit.generation, snapshot)).toEqual(
+          applied(id, 1_700_000_010),
+        );
+        expect(await auditSnapshot(id)).toEqual(row);
+        // Event identity is excluded from content equality, but the originally
+        // accepted event spelling must survive an identical redelivery.
+        expect(
+          await submit(id, permit.generation, {
+            ...snapshot,
+            event_id: different,
+          }),
+        ).toEqual({
+          steam_app_id: id,
+          outcome: 'unchanged',
+          current_observed_at: 1_700_000_010,
+        });
+        expect(await auditSnapshot(id)).toEqual(row);
+        // Isolate each content comparison: one lossy field cannot be hidden
+        // by a correctly compared field elsewhere in the same snapshot.
+        for (const candidate of [
+          {
+            ...snapshot,
+            metadata: { ...snapshot.metadata, title: different },
+          },
+          {
+            ...snapshot,
+            metadata: {
+              ...snapshot.metadata,
+              release: {
+                status: 'upcoming',
+                date: { kind: 'window', window: different },
+              },
+            },
+          },
+          {
+            ...snapshot,
+            provenance: {
+              ...snapshot.provenance,
+              extractor_version: different,
+            },
+          },
+        ]) {
+          expect(await submit(id, permit.generation, candidate)).toEqual({
+            error: { code: 'SNAPSHOT_CONFLICT' },
+          });
+          expect(await auditSnapshot(id)).toEqual(row);
+        }
+        if (character === '\u0000') {
+          // Different text AFTER NUL must participate in equality too.
+          const afterNul = 'synthetic-\u0000-different-tail';
+          for (const candidate of [
+            {
+              ...snapshot,
+              metadata: { ...snapshot.metadata, title: afterNul },
+            },
+            {
+              ...snapshot,
+              metadata: {
+                ...snapshot.metadata,
+                release: {
+                  status: 'upcoming',
+                  date: { kind: 'window', window: afterNul },
+                },
+              },
+            },
+            {
+              ...snapshot,
+              provenance: {
+                ...snapshot.provenance,
+                extractor_version: afterNul,
+              },
+            },
+          ]) {
+            expect(await submit(id, permit.generation, candidate)).toEqual({
+              error: { code: 'SNAPSHOT_CONFLICT' },
+            });
+            expect(await auditSnapshot(id)).toEqual(row);
+          }
+        }
+        // A newer observation replaces scalar spelling and clears a formerly
+        // known window to SQL NULL, not a JSON string or JSON null artifact.
+        expect(
+          await submit(id, permit.generation, {
+            ...cleared,
+            event_id: different,
+            metadata: { ...cleared.metadata, title: different },
+            provenance: {
+              ...initial.provenance,
+              observed_at: 1_700_000_011,
+              extractor_version: different,
+            },
+          }),
+        ).toEqual(applied(id, 1_700_000_011));
+        expect(await auditSnapshot(id)).toEqual({
+          ...clearedRow,
+          steamAppId: id,
+          eventId: different,
+          title: different,
+          sourceUrl: initial.provenance.source_url,
+          extractorVersion: different,
+        });
+        expect(await inspect(id)).toEqual(beforeControl);
+      }
+
+      // Minimum and maximum ordinary Unicode scalar lengths still work. Emoji
+      // are one code point, not two UTF-16 units or four UTF-8 bytes.
+      for (const [id, title, eventId, window, extractorVersion, sourceUrl] of [
+        [4207, 'x', 'x', 'x', 'x', 'https://example.invalid'],
+        [
+          4208,
+          '😀'.repeat(512),
+          '😀'.repeat(128),
+          '😀'.repeat(256),
+          '😀'.repeat(128),
+          `https://catalog.example.invalid/${'😀'.repeat(2016)}`,
+        ],
+      ] as const) {
+        const permit = await acquire(id);
+        const snapshot = {
+          ...initial,
+          event_id: eventId,
+          metadata: {
+            ...initial.metadata,
+            title,
+            release: { status: 'upcoming', date: { kind: 'window', window } },
+          },
+          provenance: {
+            ...initial.provenance,
+            source_url: sourceUrl,
+            extractor_version: extractorVersion,
+          },
+        };
+        const row = {
+          ...initialSnapshotRow,
+          steamAppId: id,
+          eventId,
+          title,
+          releaseDateKind: 'window',
+          releaseDate: null,
+          releaseWindow: window,
+          sourceUrl,
+          extractorVersion,
+        };
+        expect(await submit(id, permit.generation, snapshot)).toEqual(
+          applied(id, 1_700_000_010),
+        );
+        expect(await auditSnapshot(id)).toEqual(row);
+        expect(
+          await submit(id, permit.generation, {
+            ...snapshot,
+            event_id: 'synthetic-boundary-redelivery',
+          }),
+        ).toEqual({
+          steam_app_id: id,
+          outcome: 'unchanged',
+          current_observed_at: 1_700_000_010,
+        });
+        expect(await auditSnapshot(id)).toEqual(row);
+        // Bounds remain enforced by the real service before D1 writes.
+        const invalidScalar = id === 4207 ? '' : '😀';
+        for (const candidate of [
+          { ...snapshot, event_id: id === 4207 ? '' : eventId + invalidScalar },
+          {
+            ...snapshot,
+            metadata: {
+              ...snapshot.metadata,
+              title: id === 4207 ? '' : title + invalidScalar,
+            },
+          },
+          {
+            ...snapshot,
+            metadata: {
+              ...snapshot.metadata,
+              release: {
+                status: 'upcoming',
+                date: {
+                  kind: 'window',
+                  window: id === 4207 ? '' : window + invalidScalar,
+                },
+              },
+            },
+          },
+          {
+            ...snapshot,
+            provenance: {
+              ...snapshot.provenance,
+              extractor_version:
+                id === 4207 ? '' : extractorVersion + invalidScalar,
+            },
+          },
+          {
+            ...snapshot,
+            provenance: {
+              ...snapshot.provenance,
+              source_url: id === 4207 ? '' : sourceUrl + invalidScalar,
+            },
+          },
+        ]) {
+          expect(await submit(id, permit.generation, candidate)).toEqual({
+            error: { code: 'VALIDATION_FAILED' },
+          });
+          expect(await auditSnapshot(id)).toEqual(row);
+        }
+      }
+
+      // Exact approved source spelling includes literal lone surrogates in the
+      // path. URL parsing may accept/normalize them, but storage must not. NUL
+      // is deliberately NOT used in URLs because the validator rejects it.
+      const sourcePermit = await acquire(4209);
+      const sourceSpellings = [
+        'café',
+        'cafe\u0301',
+        'caf%C3%A9',
+        '\ud800',
+        '\ud801',
+        '\udc00',
+        '\udc01',
+        '\ufffd',
+      ].map((spelling) => `https://catalog.example.invalid/apps/${spelling}`);
+      for (const [index, sourceUrl] of sourceSpellings.entries()) {
+        const observedAt = 1_700_000_010 + index;
+        const eventId = `synthetic-source-spelling-${index}`;
+        const snapshot = {
+          ...syntheticSnapshot(observedAt, eventId),
+          provenance: {
+            ...initial.provenance,
+            observed_at: observedAt,
+            source_url: sourceUrl,
+          },
+        };
+        const row = {
+          ...initialSnapshotRow,
+          steamAppId: 4209,
+          eventId,
+          observedAt,
+          sourceUrl,
+        };
+        expect(await submit(4209, sourcePermit.generation, snapshot)).toEqual(
+          applied(4209, observedAt),
+        );
+        expect(await auditSnapshot(4209)).toEqual(row);
+        expect(
+          await submit(4209, sourcePermit.generation, {
+            ...snapshot,
+            event_id: 'synthetic-source-redelivery',
+          }),
+        ).toEqual({
+          steam_app_id: 4209,
+          outcome: 'unchanged',
+          current_observed_at: observedAt,
+        });
+        for (const differentSource of sourceSpellings) {
+          if (differentSource === sourceUrl) continue;
+          expect(
+            await submit(4209, sourcePermit.generation, {
+              ...snapshot,
+              provenance: {
+                ...snapshot.provenance,
+                source_url: differentSource,
+              },
+            }),
+          ).toEqual({ error: { code: 'SNAPSHOT_CONFLICT' } });
+          expect(await auditSnapshot(4209)).toEqual(row);
+        }
+      }
+
+      // Accepted event IDs are not globally unique; the base target need not
+      // exist. The exact floor and +300-second future bound both permit writes.
+      const second = await acquire(1002);
+      expect(
+        await submit(1002, second.generation, syntheticSnapshot(1_700_000_000)),
+      ).toEqual(applied(1002, 1_700_000_000));
+      expect(await auditSnapshot(1002)).toEqual({
+        ...initialSnapshotRow,
+        steamAppId: 1002,
+        observedAt: 1_700_000_000,
+      });
+      expect((await inspect(9001)).state).toBe('uninitialized');
+      const future = await acquire(1004);
+      expect(
+        await submit(1004, future.generation, syntheticSnapshot(1_700_000_400)),
+      ).toEqual(applied(1004, 1_700_000_400));
+      const futureRow = {
+        ...initialSnapshotRow,
+        steamAppId: 1004,
+        observedAt: 1_700_000_400,
+      };
+      expect(await auditSnapshot(1004)).toEqual(futureRow);
+      expect(
+        await submit(1004, future.generation, syntheticSnapshot(1_700_000_401)),
+      ).toEqual({ error: { code: 'VALIDATION_FAILED' } });
+      expect(await auditSnapshot(1004)).toEqual(futureRow);
+
       const independentGenerations = new Set([first.generation]);
       for (const id of [1, 4294967295]) {
         const independent = await acquire(id, 1_700_000_001_000);
@@ -380,8 +1163,236 @@ it('commits durable generations, converges gated contenders, and rolls back fail
         1_700_000_009,
       );
 
+      const compete = async (
+        id: number,
+        generation: string,
+        snapshots: unknown[],
+      ) =>
+        Schema.decodeUnknownSync(
+          snapshotRace,
+          strict,
+        )(
+          await json(`/fixture/snapshot-contenders/${id}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ generation, snapshots }),
+          }),
+        );
+      // Scrambled unique times give real concurrent newer/older competition.
+      // A successful apply reports ITS timestamp even if a later write wins.
+      for (const [id, existing] of [
+        [3101, false],
+        [3102, true],
+      ] as const) {
+        const permit = await acquire(id);
+        if (existing) {
+          expect(
+            await submit(
+              id,
+              permit.generation,
+              syntheticSnapshot(1_700_000_024, 'synthetic-existing'),
+            ),
+          ).toEqual(applied(id, 1_700_000_024));
+        }
+        const observations = [
+          30, 21, 27, 20, 31, 23, 29, 22, 28, 25, 26, 19,
+        ].map((second) => 1_700_000_000 + second);
+        const snapshots = observations.map((time, index) => ({
+          ...syntheticSnapshot(time, `synthetic-contender-${index}`),
+          metadata: {
+            ...initial.metadata,
+            title: `Synthetic Contender ${index}`,
+          },
+        }));
+        const competition = await compete(id, permit.generation, snapshots);
+        expect(competition.arrivals).toBe(12);
+        expect(competition.results).toHaveLength(12);
+        const acceptedTimes = new Set<number>(existing ? [1_700_000_024] : []);
+        for (const [index, result] of competition.results.entries()) {
+          expect('error' in result).toBe(false);
+          if ('error' in result)
+            throw new Error('Unexpected snapshot contender rejection');
+          expect(result.steam_app_id).toBe(id);
+          const time = observations[index];
+          if (time === undefined)
+            throw new Error('Missing contender observation');
+          if (result.outcome === 'applied') {
+            expect(result.current_observed_at).toBe(time);
+            acceptedTimes.add(time);
+          } else {
+            expect(result.outcome).toBe('ignored_stale');
+            expect(result.current_observed_at).toBeGreaterThan(time);
+          }
+        }
+        // A stale response must name an actually accepted atomic pre-state,
+        // never its own uncommitted payload or a nonexistent intermediate row.
+        for (const result of competition.results) {
+          if ('error' in result)
+            throw new Error('Unexpected snapshot contender rejection');
+          expect(acceptedTimes.has(result.current_observed_at)).toBe(true);
+        }
+        expect(competition.results[4]).toEqual(applied(id, 1_700_000_031));
+        expect(await auditSnapshot(id)).toEqual({
+          ...initialSnapshotRow,
+          steamAppId: id,
+          eventId: 'synthetic-contender-4',
+          title: 'Synthetic Contender 4',
+          observedAt: 1_700_000_031,
+        });
+        expect(await inspect(id)).toEqual({
+          steam_app_id: id,
+          state: 'eligible',
+          generation: permit.generation,
+          generation_issued_at: permit.minimum_observed_at,
+        });
+      }
+      // Equal differing contenders establish exactly one winner, with every
+      // loser a mutation-free conflict. Equal decoded contenders are no-ops.
+      for (const [id, different] of [
+        [3201, true],
+        [3202, false],
+      ] as const) {
+        const permit = await acquire(id);
+        const snapshots = Array.from({ length: 12 }, (_, index) => ({
+          ...syntheticSnapshot(1_700_000_030, `synthetic-equal-${index}`),
+          metadata: {
+            ...initial.metadata,
+            title: different
+              ? `Synthetic Equal ${index}`
+              : initial.metadata.title,
+          },
+        }));
+        const competition = await compete(id, permit.generation, snapshots);
+        expect(competition.arrivals).toBe(12);
+        expect(competition.results).toHaveLength(12);
+        const winners = competition.results.flatMap((result, index) =>
+          !('error' in result) && result.outcome === 'applied' ? [index] : [],
+        );
+        expect(winners).toHaveLength(1);
+        const winner = winners[0];
+        if (winner === undefined)
+          throw new Error('Expected an equal-time winner');
+        for (const [index, result] of competition.results.entries()) {
+          expect(result).toEqual(
+            index === winner
+              ? applied(id, 1_700_000_030)
+              : different
+                ? { error: { code: 'SNAPSHOT_CONFLICT' } }
+                : {
+                    steam_app_id: id,
+                    outcome: 'unchanged',
+                    current_observed_at: 1_700_000_030,
+                  },
+          );
+        }
+        expect(await auditSnapshot(id)).toEqual({
+          ...initialSnapshotRow,
+          steamAppId: id,
+          eventId: `synthetic-equal-${winner}`,
+          title: different
+            ? `Synthetic Equal ${winner}`
+            : initialSnapshotRow.title,
+          observedAt: 1_700_000_030,
+        });
+      }
+
+      // The binding appends a REAL failing SQL step after the real submit
+      // batch. Both inserts and replacements must roll back, not just report
+      // failure after leaving a partial mutation behind.
+      const rollbackPermit = await acquire(4101);
+      const rollbackControl = await inspect(4101);
+      const rollbackFirst = syntheticSnapshot(
+        1_700_000_050,
+        'synthetic-rollback-first',
+      );
+      expect(
+        await submit(
+          4101,
+          rollbackPermit.generation,
+          rollbackFirst,
+          'submit-fail',
+        ),
+      ).toEqual({ error: { code: 'SERVICE_UNAVAILABLE' } });
+      expect(await auditSnapshot(4101)).toBeNull();
+      expect(await inspect(4101)).toEqual(rollbackControl);
+      expect(
+        await submit(4101, rollbackPermit.generation, rollbackFirst),
+      ).toEqual(applied(4101, 1_700_000_050));
+      const rollbackRow = {
+        ...initialSnapshotRow,
+        steamAppId: 4101,
+        eventId: 'synthetic-rollback-first',
+        observedAt: 1_700_000_050,
+      };
+      expect(await auditSnapshot(4101)).toEqual(rollbackRow);
+      const rollbackReplacement = {
+        ...cleared,
+        event_id: 'synthetic-rollback-replacement',
+        provenance: { ...cleared.provenance, observed_at: 1_700_000_051 },
+      };
+      expect(
+        await submit(
+          4101,
+          rollbackPermit.generation,
+          rollbackReplacement,
+          'submit-fail',
+        ),
+      ).toEqual({ error: { code: 'SERVICE_UNAVAILABLE' } });
+      expect(await auditSnapshot(4101)).toEqual(rollbackRow);
+      expect(await inspect(4101)).toEqual(rollbackControl);
+      // Retry unchanged payload/event/generation after the uncertain failure.
+      expect(
+        await submit(4101, rollbackPermit.generation, rollbackReplacement),
+      ).toEqual(applied(4101, 1_700_000_051));
+      const retriedRow = {
+        ...clearedRow,
+        steamAppId: 4101,
+        eventId: 'synthetic-rollback-replacement',
+        observedAt: 1_700_000_051,
+      };
+      expect(await auditSnapshot(4101)).toEqual(retriedRow);
+      expect(
+        await submit(4101, rollbackPermit.generation, rollbackReplacement),
+      ).toEqual({
+        steam_app_id: 4101,
+        outcome: 'unchanged',
+        current_observed_at: 1_700_000_051,
+      });
+      expect(await auditSnapshot(4101)).toEqual(retriedRow);
+      // A response can be lost after COMMIT too: discard it, accept a newer
+      // observation, and retry the original without expecting original outcome.
+      const uncertain = syntheticSnapshot(1_700_000_052, 'synthetic-uncertain');
+      await submit(4101, rollbackPermit.generation, uncertain);
+      expect(
+        await submit(
+          4101,
+          rollbackPermit.generation,
+          syntheticSnapshot(1_700_000_053, 'synthetic-after-uncertain'),
+        ),
+      ).toEqual(applied(4101, 1_700_000_053));
+      const afterUncertain = {
+        ...initialSnapshotRow,
+        steamAppId: 4101,
+        eventId: 'synthetic-after-uncertain',
+        observedAt: 1_700_000_053,
+      };
+      expect(await auditSnapshot(4101)).toEqual(afterUncertain);
+      expect(await submit(4101, rollbackPermit.generation, uncertain)).toEqual({
+        steam_app_id: 4101,
+        outcome: 'ignored_stale',
+        current_observed_at: 1_700_000_053,
+      });
+      expect(await auditSnapshot(4101)).toEqual(afterUncertain);
+
       const prefix = '/internal/v1/steam/applications';
-      const http = async (path: string, token: string, method = 'GET') => {
+      const http = async (
+        path: string,
+        token: string,
+        method = 'GET',
+        snapshot?: unknown,
+        generation?: string,
+        encodedSnapshot?: string,
+      ) => {
         const response = await fetch(
           `${url}${path.startsWith('/fixture/') ? '' : prefix}${path}`,
           {
@@ -389,7 +1400,16 @@ it('commits durable generations, converges gated contenders, and rolls back fail
             headers: {
               Authorization: `Bearer ${token}`,
               'X-Request-ID': 'caller-id',
+              ...(snapshot === undefined
+                ? {}
+                : { 'Content-Type': 'application/json' }),
+              ...(generation === undefined
+                ? {}
+                : { 'X-Publication-Generation': generation }),
             },
+            ...(snapshot === undefined
+              ? {}
+              : { body: encodedSnapshot ?? JSON.stringify(snapshot) }),
             signal: AbortSignal.timeout(10_000),
           },
         );
@@ -434,6 +1454,194 @@ it('commits durable generations, converges gated contenders, and rolls back fail
         },
       });
       expect(get.requestId).not.toBe(post.requestId);
+      // Representative real Hono/auth -> Effect -> native D1 PUTs. Policy is
+      // supplied by the isolated Worker environment, not by a Node service stub.
+      const httpSnapshot = syntheticSnapshot(
+        posted.minimum_observed_at,
+        'synthetic-http-first',
+      );
+      const put = await http(
+        '/5001/snapshot',
+        ingestion,
+        'PUT',
+        httpSnapshot,
+        posted.generation,
+      );
+      expect(put.status).toBe(200);
+      expect(put.body).toEqual({
+        data: applied(5001, posted.minimum_observed_at),
+      });
+      const httpInitialRow = {
+        ...initialSnapshotRow,
+        steamAppId: 5001,
+        eventId: 'synthetic-http-first',
+        observedAt: posted.minimum_observed_at,
+      };
+      expect(await auditSnapshot(5001)).toEqual(httpInitialRow);
+      const noOp = await http(
+        '/5001/snapshot',
+        ingestion,
+        'PUT',
+        { ...httpSnapshot, event_id: 'synthetic-http-redelivery' },
+        posted.generation,
+      );
+      expect(noOp.status).toBe(200);
+      expect(noOp.body).toEqual({
+        data: {
+          steam_app_id: 5001,
+          outcome: 'unchanged',
+          current_observed_at: posted.minimum_observed_at,
+        },
+      });
+      expect(await auditSnapshot(5001)).toEqual(httpInitialRow);
+      // Real Hono PUT also compares decoded content, not JSON key/escape or
+      // supported-OS ordering. The first accepted event remains unchanged.
+      const httpRepresentation = JSON.stringify({
+        provenance: Object.fromEntries(
+          Object.entries(httpSnapshot.provenance).reverse(),
+        ),
+        metadata: Object.fromEntries(
+          Object.entries({
+            ...httpSnapshot.metadata,
+            supported_os: ['linux', 'windows', 'macos'],
+          }).reverse(),
+        ),
+        event_id: 'synthetic-http-representation',
+      }).replace('Café', 'Caf\\u00e9');
+      const equivalentPut = await http(
+        '/5001/snapshot',
+        ingestion,
+        'PUT',
+        httpSnapshot,
+        posted.generation,
+        httpRepresentation,
+      );
+      expect(equivalentPut.status).toBe(200);
+      expect(equivalentPut.body).toEqual({
+        data: {
+          steam_app_id: 5001,
+          outcome: 'unchanged',
+          current_observed_at: posted.minimum_observed_at,
+        },
+      });
+      expect(await auditSnapshot(5001)).toEqual(httpInitialRow);
+      const conflict = await http(
+        '/5001/snapshot',
+        ingestion,
+        'PUT',
+        {
+          ...httpSnapshot,
+          metadata: {
+            ...httpSnapshot.metadata,
+            title: 'Synthetic HTTP Conflict',
+          },
+        },
+        posted.generation,
+      );
+      expect(conflict.status).toBe(409);
+      expect(conflict.body).toEqual({
+        error: { code: 'SNAPSHOT_CONFLICT', request_id: conflict.requestId },
+      });
+      expect(await auditSnapshot(5001)).toEqual(httpInitialRow);
+      const missingGeneration = await http(
+        '/5001/snapshot',
+        ingestion,
+        'PUT',
+        httpSnapshot,
+      );
+      expect(missingGeneration.status).toBe(422);
+      const safeValidation = Schema.decodeUnknownSync(
+        Schema.Struct({
+          error: Schema.Struct({
+            code: Schema.Literal('VALIDATION_FAILED'),
+            request_id: Schema.String,
+            issues: Schema.optionalKey(
+              Schema.Array(
+                Schema.Struct({ path: Schema.String, code: Schema.String }),
+              ),
+            ),
+          }),
+        }),
+        strict,
+      )(missingGeneration.body);
+      expect(safeValidation.error.request_id).toBe(missingGeneration.requestId);
+      expect(safeValidation.error.issues?.length ?? 0).toBeLessThanOrEqual(20);
+      expect(await auditSnapshot(5001)).toEqual(httpInitialRow);
+      const wrongRole = await http(
+        '/5001/snapshot',
+        admin,
+        'PUT',
+        httpSnapshot,
+        posted.generation,
+      );
+      expect(wrongRole.status).toBe(403);
+      expect(wrongRole.body).toEqual({
+        error: { code: 'FORBIDDEN', request_id: wrongRole.requestId },
+      });
+      expect(await auditSnapshot(5001)).toEqual(httpInitialRow);
+      const unapproved = await http(
+        '/5001/snapshot',
+        ingestion,
+        'PUT',
+        {
+          ...httpSnapshot,
+          provenance: {
+            ...httpSnapshot.provenance,
+            source_url: 'https://unapproved.example.invalid/apps/1001',
+          },
+        },
+        posted.generation,
+      );
+      expect(unapproved.status).toBe(403);
+      expect(unapproved.body).toEqual({
+        error: {
+          code: 'SOURCE_NOT_APPROVED',
+          request_id: unapproved.requestId,
+        },
+      });
+      expect(await auditSnapshot(5001)).toEqual(httpInitialRow);
+      const httpNewer = {
+        ...httpSnapshot,
+        event_id: 'synthetic-http-newer',
+        provenance: {
+          ...httpSnapshot.provenance,
+          observed_at: posted.minimum_observed_at + 1,
+        },
+      };
+      const replacement = await http(
+        '/5001/snapshot',
+        ingestion,
+        'PUT',
+        httpNewer,
+        posted.generation,
+      );
+      expect(replacement.status).toBe(200);
+      expect(replacement.body).toEqual({
+        data: applied(5001, posted.minimum_observed_at + 1),
+      });
+      const httpNewerRow = {
+        ...httpInitialRow,
+        eventId: 'synthetic-http-newer',
+        observedAt: posted.minimum_observed_at + 1,
+      };
+      expect(await auditSnapshot(5001)).toEqual(httpNewerRow);
+      const stale = await http(
+        '/5001/snapshot',
+        ingestion,
+        'PUT',
+        httpSnapshot,
+        posted.generation,
+      );
+      expect(stale.status).toBe(200);
+      expect(stale.body).toEqual({
+        data: {
+          steam_app_id: 5001,
+          outcome: 'ignored_stale',
+          current_observed_at: posted.minimum_observed_at + 1,
+        },
+      });
+      expect(await auditSnapshot(5001)).toEqual(httpNewerRow);
+
       const denial = await http(
         '/2002/ingestion-authorization',
         ingestion,
@@ -464,6 +1672,7 @@ it('commits durable generations, converges gated contenders, and rolls back fail
           { name: '__alchemy_migrations' },
           { name: '_cf_METADATA' }, // workerd's own D1 metadata, not catalog data
           { name: 'steam_application_publication' },
+          { name: 'steam_application_snapshot' },
         ],
         columns: [
           { name: 'steam_app_id', type: 'INTEGER' },
@@ -471,16 +1680,31 @@ it('commits durable generations, converges gated contenders, and rolls back fail
           { name: 'generation', type: 'TEXT' },
           { name: 'generation_issued_at', type: 'INTEGER' },
         ],
-        history: [{ count: 1 }],
+        history: [{ count: 3 }],
       });
-      return Promise.all(
-        [1, 1001, 2001, 2002, 3001, 3002, 4001, 5001, 4294967295].map(inspect),
-      );
+      return {
+        controls: await Promise.all(
+          [
+            1, 1001, 1002, 1003, 1004, 2001, 2002, 3001, 3002, 3101, 3102, 3201,
+            3202, 4001, 4101, 4201, 4202, 4203, 4204, 4205, 4206, 4207, 4208,
+            4209, 5001, 4294967295,
+          ].map(inspect),
+        ),
+        snapshots: await Promise.all(
+          [
+            1001, 1002, 1003, 1004, 2002, 3101, 3102, 3201, 3202, 4101, 4201,
+            4202, 4203, 4204, 4205, 4206, 4207, 4208, 4209, 5001,
+          ].map(async (id) => ({ id, snapshot: await auditSnapshot(id) })),
+        ),
+      };
     });
 
     // New workerd/Alchemy process, identical local D1 storage. No reseeding.
     await withWorker(async () => {
-      for (const stored of persisted) {
+      for (const { id, snapshot } of persisted.snapshots) {
+        expect(await auditSnapshot(id)).toEqual(snapshot);
+      }
+      for (const stored of persisted.controls) {
         expect(await inspect(stored.steam_app_id)).toEqual(stored);
         if (stored.state === 'eligible') {
           expect(await acquire(stored.steam_app_id, 2_000_000_000_999)).toEqual(
@@ -497,10 +1721,10 @@ it('commits durable generations, converges gated contenders, and rolls back fail
         error: { code: 'PUBLICATION_WITHDRAWN' },
       });
       const audit = await json('/fixture/audit');
-      expect(audit).toMatchObject({ history: [{ count: 1 }] });
+      expect(audit).toMatchObject({ history: [{ count: 3 }] });
     });
     await assertNoCredentialFiles();
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
-}, 120_000);
+}, 180_000);

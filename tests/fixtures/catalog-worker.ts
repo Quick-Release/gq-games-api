@@ -2,17 +2,58 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // See LICENSE in the repository root.
 
-import { sql } from 'drizzle-orm';
-import { Clock, Deferred, Effect, Layer } from 'effect';
+import { eq, sql } from 'drizzle-orm';
+import { Clock, Deferred, Effect, Layer, Schema } from 'effect';
 import { createApp } from '../../src/app';
 import { Database } from '../../src/db/database';
-import { publicationControl } from '../../src/db/schema';
+import { applicationSnapshot, publicationControl } from '../../src/db/schema';
 import type { WorkerEnv } from '../../src/env';
 import { Catalog } from '../../src/services/catalog';
 
 // This entire adapter is bundled ONLY by catalog-stack.ts. There are no
 // production routes, env switches, or service hooks for seeds/faults/clocks.
 const app = createApp({ allowInsecureLocalTest: true });
+const approvedSources = JSON.stringify([
+  ...[
+    'https://catalog.example.invalid/apps/1001',
+    'https://catalog.example.invalid/apps/1001-alternate',
+    'https://CATALOG.example.invalid/apps/1001',
+    // Exact synthetic spellings, never normalized through URL.toString().
+    ...[
+      'café',
+      'cafe\u0301',
+      'caf%C3%A9',
+      '\ud800',
+      '\ud801',
+      '\udc00',
+      '\udc01',
+      '\ufffd',
+    ].map((spelling) => `https://catalog.example.invalid/apps/${spelling}`),
+  ].map((source_url) => ({ source_url, extractor_version: 'synthetic-v1' })),
+  ...[
+    'synthetic-v2',
+    ...['\ud800', '\ud801', '\udc00', '\udc01', '\ufffd', '\u0000'].map(
+      (character) => `synthetic-${character}-tail`,
+    ),
+    'synthetic-\u0000-different-tail',
+  ].map((extractor_version) => ({
+    source_url: 'https://catalog.example.invalid/apps/1001',
+    extractor_version,
+  })),
+  { source_url: 'https://example.invalid', extractor_version: 'x' },
+  {
+    source_url: `https://catalog.example.invalid/${'😀'.repeat(2016)}`,
+    extractor_version: '😀'.repeat(128),
+  },
+]);
+const submission = Schema.Struct({
+  generation: Schema.optionalKey(Schema.Unknown),
+  snapshot: Schema.Unknown,
+});
+const competingSubmissions = Schema.Struct({
+  generation: Schema.Unknown,
+  snapshots: Schema.Array(Schema.Unknown),
+});
 
 const fixedClock = (clock: Clock.Clock, millis: number) => ({
   currentTimeMillisUnsafe: () => millis,
@@ -78,6 +119,50 @@ const contenders = (steamAppId: number) =>
     return { arrivals, candidates, results };
   });
 
+const snapshotContenders = (steamAppId: number, input: unknown) =>
+  Effect.gen(function* () {
+    const { generation, snapshots } =
+      Schema.decodeUnknownSync(competingSubmissions)(input);
+    const catalog = yield* Catalog;
+    const clock = yield* Clock.Clock;
+    const gate = yield* Deferred.make<void>();
+    let arrivals = 0;
+    const results = yield* Effect.forEach(
+      snapshots,
+      (snapshot, index) =>
+        Effect.gen(function* () {
+          let arrived = false;
+          const millis = 1_700_000_100_999 + index * 1_000;
+          const contenderClock = {
+            ...fixedClock(clock, millis),
+            // Every submit reaches its first clock read before any validation
+            // can finish or any submit batch can start. No sleeps or Node mocks.
+            currentTimeMillis: Effect.gen(function* () {
+              if (!arrived) {
+                arrived = true;
+                arrivals++;
+                if (arrivals === snapshots.length) {
+                  yield* Deferred.succeed(gate, undefined);
+                }
+              }
+              yield* Deferred.await(gate);
+              return millis;
+            }),
+          };
+          return yield* catalog
+            .submitSnapshot(steamAppId, generation, snapshot, approvedSources)
+            .pipe(
+              Effect.provideService(Clock.Clock, contenderClock),
+              Effect.catchTag('CatalogFailure', (failure) =>
+                Effect.succeed({ error: { code: failure.code } }),
+              ),
+            );
+        }),
+      { concurrency: 'unbounded' },
+    );
+    return { arrivals, results };
+  });
+
 export default {
   async fetch(request: Request, env: WorkerEnv, ctx: ExecutionContext) {
     const url = new URL(request.url);
@@ -103,7 +188,14 @@ export default {
 
     const [, , operation, id] = url.pathname.split('/');
     const steamAppId = Number(id);
-    const binding = operation === 'fail' ? failingBatchBinding(env.DB) : env.DB;
+    const binding =
+      operation === 'fail' || operation === 'submit-fail'
+        ? failingBatchBinding(env.DB)
+        : env.DB;
+    const input =
+      operation?.startsWith('submit') || operation === 'snapshot-contenders'
+        ? await request.json()
+        : undefined;
     const catalogLayer = Catalog.layer.pipe(
       Layer.provide(Database.layer(binding)),
     );
@@ -143,8 +235,62 @@ export default {
         );
         return { tables, columns, history };
       }
+      if (operation === 'snapshot-audit') {
+        const db = yield* Database;
+        // One app only, all accepted fields only. No raw SQL/payload archive,
+        // mutation hook, or unbounded snapshot listing is exposed.
+        const rows = yield* db
+          .select({
+            steamAppId: applicationSnapshot.steamAppId,
+            eventId: applicationSnapshot.eventId,
+            title: applicationSnapshot.title,
+            productType: applicationSnapshot.productType,
+            baseAppId: applicationSnapshot.baseAppId,
+            developers: applicationSnapshot.developers,
+            publishers: applicationSnapshot.publishers,
+            supportedOs: applicationSnapshot.supportedOs,
+            releaseStatus: applicationSnapshot.releaseStatus,
+            releaseDateKind: applicationSnapshot.releaseDateKind,
+            releaseDate: applicationSnapshot.releaseDate,
+            releaseWindow: applicationSnapshot.releaseWindow,
+            sourceUrl: applicationSnapshot.sourceUrl,
+            language: applicationSnapshot.language,
+            observedAt: applicationSnapshot.observedAt,
+            extractorVersion: applicationSnapshot.extractorVersion,
+          })
+          .from(applicationSnapshot)
+          .where(eq(applicationSnapshot.steamAppId, steamAppId));
+        return { snapshot: rows[0] ?? null };
+      }
       if (operation === 'contenders') return yield* contenders(steamAppId);
+      if (operation === 'snapshot-contenders') {
+        return yield* snapshotContenders(steamAppId, input);
+      }
       const catalog = yield* Catalog;
+      if (operation?.startsWith('submit')) {
+        const { generation, snapshot } =
+          Schema.decodeUnknownSync(submission)(input);
+        const clock = yield* Clock.Clock;
+        return yield* catalog
+          .submitSnapshot(
+            steamAppId,
+            generation,
+            snapshot,
+            operation === 'submit-no-policy' ? undefined : approvedSources,
+          )
+          .pipe(
+            Effect.provideService(
+              Clock.Clock,
+              fixedClock(
+                clock,
+                Number(url.searchParams.get('millis') ?? '1700000100999'),
+              ),
+            ),
+            Effect.catchTag('CatalogFailure', (failure) =>
+              Effect.succeed({ error: { code: failure.code } }),
+            ),
+          );
+      }
       if (operation === 'inspect') {
         return yield* catalog.inspectPublication(steamAppId);
       }

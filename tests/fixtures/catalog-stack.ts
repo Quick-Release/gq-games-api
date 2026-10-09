@@ -30,6 +30,12 @@ export default Alchemy.Stack(
       ...apiConfig,
       env: {
         DB: db,
+        APPROVED_SNAPSHOT_SOURCES: JSON.stringify([
+          {
+            source_url: 'https://catalog.example.invalid/apps/1001',
+            extractor_version: 'synthetic-v1',
+          },
+        ]),
         INGESTION_BEARER_TOKEN: Config.Redacted('INGESTION_BEARER_TOKEN'),
         PUBLICATION_ADMIN_BEARER_TOKEN: Config.Redacted(
           'PUBLICATION_ADMIN_BEARER_TOKEN',

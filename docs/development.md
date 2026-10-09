@@ -5,14 +5,15 @@
 ```text
 src/app.ts               Hono HTTP boundary, exported factory for tests
 src/services/health.ts   Process-only health Effect
-src/services/catalog.ts  Publication acquisition/inspection Effect service
+src/services/catalog.ts  Publication acquisition/inspection/snapshot Effect service
+src/services/snapshot.ts Strict snapshot validation and synthetic source policy
 src/http/catalog.ts      Private catalog transport, authentication, and errors
 src/db/                 Drizzle schema and Effect-native D1 service
 src/env.ts              Type-only Alchemy binding inference
 src/index.ts             Cloudflare Worker entrypoint
 alchemy.run.ts           Worker + D1 declarations and Alchemy v2 stack
 drizzle.config.ts       Credential-free migration generation config
-drizzle/                Reviewed minimal publication-control migration
+drizzle/                Reviewed publication-control and snapshot migrations
 scripts/build-worker.ts  Offline Alchemy source-provider build adapter
 scripts/preview-worker.ts Local-only preview of the built Worker
 vite.config.ts           Vite+ test, lint, format, and check settings
@@ -107,11 +108,11 @@ Keep credentials out of pull-request jobs, especially contributions from forks.
 5. Verify `/health` on the returned URL and record the runtime experiment.
 
 `workersDev: true` makes the deployed Worker publicly accessible. Two private
-publication-control operations are implemented; public lookup, snapshot
-submission, admin transitions, quotas, and CORS policy are not. D1 retains only
-minimal publication control, not game metadata. Deploy can now create a D1
-database, so review costs and migration SQL as well as the public HTTP surface
-before deploying.
+publication-control operations and complete snapshot submission are implemented;
+public lookup, admin transitions, quotas, and CORS policy are not. D1 retains
+minimal publication control separately from complete synthetic snapshots. Deploy
+can now create a D1 database, so review costs and migration SQL as well as the
+public HTTP surface before deploying.
 
 ## State and secrets
 
@@ -148,6 +149,14 @@ is required by the production application even on the regular local HTTP dev
 server; the explicit insecure factory option is reserved for tests, not a Worker
 environment switch. No rotation rollout or production credential setup has been
 performed.
+
+`APPROVED_SNAPSHOT_SOURCES` is a non-secret Worker Config.String binding with an
+empty deny-all default. Supply a JSON array of exact `source_url` and
+`extractor_version` pairs. Only reserved synthetic HTTPS `example.invalid` URLs
+(and subdomains), without userinfo, query, or fragment, are admitted. No real
+policy approval or upstream fetch is implemented. Policy matching does not
+establish source rights. See [README](../README.md) and
+[the contract](steam-catalog-contract.md).
 
 Ignore `.env*`, `.dev.vars*`, `.alchemy/`, `.wrangler/`, logs, and build output.
 Commit only reviewed placeholder examples if secrets become necessary. Public

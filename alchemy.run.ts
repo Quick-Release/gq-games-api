@@ -33,6 +33,11 @@ export const apiConfig = {
     PUBLICATION_ADMIN_BEARER_TOKEN: Config.Redacted(
       'PUBLICATION_ADMIN_BEARER_TOKEN',
     ).pipe(Config.withDefault(Redacted.make(''))),
+    // Exact synthetic URL/extractor pairs; empty configuration approves nothing.
+    // This is an enforcement policy, not source-rights approval.
+    APPROVED_SNAPSHOT_SOURCES: Config.String('APPROVED_SNAPSHOT_SOURCES').pipe(
+      Config.withDefault(''),
+    ),
   },
   compatibility: { date: '2026-10-07', flags: ['nodejs_compat'] },
   workersDev: true,

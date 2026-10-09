@@ -1,0 +1,339 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "id": "01db86ec-2164-491a-92a9-16c29c68d710",
+  "prevIds": ["697a0417-80de-41eb-a614-e6621dd58238"],
+  "ddl": [
+    {
+      "name": "steam_application_snapshot",
+      "entityType": "tables"
+    },
+    {
+      "name": "steam_application_publication",
+      "entityType": "tables"
+    },
+    {
+      "type": "integer",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "steam_app_id",
+      "entityType": "columns",
+      "table": "steam_application_snapshot"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "event_id",
+      "entityType": "columns",
+      "table": "steam_application_snapshot"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "title",
+      "entityType": "columns",
+      "table": "steam_application_snapshot"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "product_type",
+      "entityType": "columns",
+      "table": "steam_application_snapshot"
+    },
+    {
+      "type": "integer",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "base_app_id",
+      "entityType": "columns",
+      "table": "steam_application_snapshot"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "developers",
+      "entityType": "columns",
+      "table": "steam_application_snapshot"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "publishers",
+      "entityType": "columns",
+      "table": "steam_application_snapshot"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "supported_os",
+      "entityType": "columns",
+      "table": "steam_application_snapshot"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "release_status",
+      "entityType": "columns",
+      "table": "steam_application_snapshot"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "release_date_kind",
+      "entityType": "columns",
+      "table": "steam_application_snapshot"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "release_date",
+      "entityType": "columns",
+      "table": "steam_application_snapshot"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "release_window",
+      "entityType": "columns",
+      "table": "steam_application_snapshot"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "source_url",
+      "entityType": "columns",
+      "table": "steam_application_snapshot"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "language",
+      "entityType": "columns",
+      "table": "steam_application_snapshot"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "observed_at",
+      "entityType": "columns",
+      "table": "steam_application_snapshot"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "extractor_version",
+      "entityType": "columns",
+      "table": "steam_application_snapshot"
+    },
+    {
+      "type": "integer",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "steam_app_id",
+      "entityType": "columns",
+      "table": "steam_application_publication"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "state",
+      "entityType": "columns",
+      "table": "steam_application_publication"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "generation",
+      "entityType": "columns",
+      "table": "steam_application_publication"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "generation_issued_at",
+      "entityType": "columns",
+      "table": "steam_application_publication"
+    },
+    {
+      "columns": ["steam_app_id"],
+      "nameExplicit": false,
+      "name": "steam_application_snapshot_pk",
+      "table": "steam_application_snapshot",
+      "entityType": "pks"
+    },
+    {
+      "columns": ["steam_app_id"],
+      "nameExplicit": false,
+      "name": "steam_application_publication_pk",
+      "table": "steam_application_publication",
+      "entityType": "pks"
+    },
+    {
+      "value": "typeof(\"steam_app_id\") = 'integer' and \"steam_app_id\" between 1 and 4294967295",
+      "name": "snapshot_app_id",
+      "entityType": "checks",
+      "table": "steam_application_snapshot"
+    },
+    {
+      "value": "length(cast(\"event_id\" as blob)) > 0 and length(\"event_id\") <= 128",
+      "name": "snapshot_event_id",
+      "entityType": "checks",
+      "table": "steam_application_snapshot"
+    },
+    {
+      "value": "length(cast(\"title\" as blob)) > 0 and length(\"title\") <= 512",
+      "name": "snapshot_title",
+      "entityType": "checks",
+      "table": "steam_application_snapshot"
+    },
+    {
+      "value": "\"product_type\" in ('game', 'demo', 'dlc')",
+      "name": "snapshot_product_type",
+      "entityType": "checks",
+      "table": "steam_application_snapshot"
+    },
+    {
+      "value": "\"base_app_id\" is null or (typeof(\"base_app_id\") = 'integer' and \"base_app_id\" between 1 and 4294967295 and \"base_app_id\" <> \"steam_app_id\" and \"product_type\" <> 'game')",
+      "name": "snapshot_base_app_id",
+      "entityType": "checks",
+      "table": "steam_application_snapshot"
+    },
+    {
+      "value": "\"developers\" is null or case when json_valid(\"developers\") then json_type(\"developers\") = 'array' and json_array_length(\"developers\") <= 32 else 0 end",
+      "name": "snapshot_developers",
+      "entityType": "checks",
+      "table": "steam_application_snapshot"
+    },
+    {
+      "value": "\"publishers\" is null or case when json_valid(\"publishers\") then json_type(\"publishers\") = 'array' and json_array_length(\"publishers\") <= 32 else 0 end",
+      "name": "snapshot_publishers",
+      "entityType": "checks",
+      "table": "steam_application_snapshot"
+    },
+    {
+      "value": "\"supported_os\" is null or case when json_valid(\"supported_os\") then json_type(\"supported_os\") = 'array' and json_array_length(\"supported_os\") <= 3 else 0 end",
+      "name": "snapshot_supported_os",
+      "entityType": "checks",
+      "table": "steam_application_snapshot"
+    },
+    {
+      "value": "\"release_status\" in ('upcoming', 'released', 'unknown')",
+      "name": "snapshot_release_status",
+      "entityType": "checks",
+      "table": "steam_application_snapshot"
+    },
+    {
+      "value": "(\"release_date_kind\" = 'unknown' and \"release_date\" is null and \"release_window\" is null)\n        or (\"release_date_kind\" = 'exact' and \"release_date\" is not null and \"release_window\" is null\n          and \"release_date\" glob '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'\n          and coalesce(strftime('%Y-%m-%d', \"release_date\", '+0 days') = \"release_date\", 0))\n        or (\"release_date_kind\" = 'window' and \"release_date\" is null and \"release_window\" is not null\n          and length(cast(\"release_window\" as blob)) > 0 and length(\"release_window\") <= 256)",
+      "name": "snapshot_release_date",
+      "entityType": "checks",
+      "table": "steam_application_snapshot"
+    },
+    {
+      "value": "length(\"source_url\") between 1 and 2048",
+      "name": "snapshot_source_url",
+      "entityType": "checks",
+      "table": "steam_application_snapshot"
+    },
+    {
+      "value": "\"language\" = 'en'",
+      "name": "snapshot_language",
+      "entityType": "checks",
+      "table": "steam_application_snapshot"
+    },
+    {
+      "value": "typeof(\"observed_at\") = 'integer' and \"observed_at\" >= 0",
+      "name": "snapshot_observed_at",
+      "entityType": "checks",
+      "table": "steam_application_snapshot"
+    },
+    {
+      "value": "length(cast(\"extractor_version\" as blob)) > 0 and length(\"extractor_version\") <= 128",
+      "name": "snapshot_extractor_version",
+      "entityType": "checks",
+      "table": "steam_application_snapshot"
+    },
+    {
+      "value": "typeof(\"steam_app_id\") = 'integer' and \"steam_app_id\" between 1 and 4294967295",
+      "name": "publication_app_id",
+      "entityType": "checks",
+      "table": "steam_application_publication"
+    },
+    {
+      "value": "\"state\" in ('eligible', 'withdrawn')",
+      "name": "publication_state",
+      "entityType": "checks",
+      "table": "steam_application_publication"
+    },
+    {
+      "value": "length(\"generation\") > 0",
+      "name": "publication_generation",
+      "entityType": "checks",
+      "table": "steam_application_publication"
+    },
+    {
+      "value": "typeof(\"generation_issued_at\") = 'integer' and \"generation_issued_at\" >= 0",
+      "name": "publication_issued_at",
+      "entityType": "checks",
+      "table": "steam_application_publication"
+    }
+  ],
+  "renames": []
+}

@@ -22,13 +22,18 @@ export type CatalogHttpOptions = {
 const prefix = '/internal/v1/steam/applications';
 const maximumBodyBytes = 32 * 1024;
 
-type ErrorStatus = 400 | 401 | 403 | 404 | 409 | 413 | 422 | 500 | 503;
+type ErrorStatus = 400 | 401 | 403 | 404 | 409 | 413 | 415 | 422 | 500 | 503;
 type ErrorCode =
   | 'INVALID_APP_ID'
   | 'UNAUTHORIZED'
   | 'FORBIDDEN'
   | 'NOT_FOUND'
   | 'PUBLICATION_WITHDRAWN'
+  | 'PUBLICATION_GENERATION_MISMATCH'
+  | 'SNAPSHOT_CONFLICT'
+  | 'SOURCE_NOT_APPROVED'
+  | 'INVALID_JSON'
+  | 'UNSUPPORTED_MEDIA_TYPE'
   | 'PAYLOAD_TOO_LARGE'
   | 'VALIDATION_FAILED'
   | 'INTERNAL_SERVER_ERROR'
@@ -38,7 +43,7 @@ export const catalogError = (
   c: Context<CatalogHttpEnv>,
   status: ErrorStatus,
   code: ErrorCode,
-  issues?: { path: 'body'; code: 'BODY_NOT_ALLOWED' }[],
+  issues?: { path: string; code: string }[],
 ) =>
   c.json(
     {
@@ -90,6 +95,20 @@ const parseAppId = (value: string) =>
     ? Number(value)
     : undefined;
 
+const releaseBodyReader = (
+  reader: ReadableStreamDefaultReader<Uint8Array> | ReadableStreamBYOBReader,
+) => {
+  // Cancellation is advisory: hostile/test producers must not replace a chosen
+  // 413 with a rejection or delay it forever. Never log cancellation causes.
+  try {
+    void reader.cancel().catch(() => {});
+  } catch {
+    // A nonstandard producer can throw synchronously as well.
+  } finally {
+    reader.releaseLock();
+  }
+};
+
 const rejectBody = async (c: Context<CatalogHttpEnv>) => {
   if (Number(c.req.header('Content-Length')) > maximumBodyBytes) {
     return catalogError(c, 413, 'PAYLOAD_TOO_LARGE');
@@ -111,8 +130,73 @@ const rejectBody = async (c: Context<CatalogHttpEnv>) => {
       ]);
     }
   } finally {
-    await reader.cancel();
-    reader.releaseLock();
+    releaseBodyReader(reader);
+  }
+};
+
+// Never trust Content-Length to establish either size or completeness. Decode
+// only after collecting at most the actual 32 KiB limit, rejecting invalid UTF-8.
+const readSnapshotBody = async (c: Context<CatalogHttpEnv>) => {
+  const media = c.req.header('Content-Type') ?? '';
+  const encoding = c.req.header('Content-Encoding');
+  if (
+    !/^application\/json(?:\s*;\s*charset\s*=\s*(?:utf-8|"utf-8"))?\s*$/i.test(
+      media,
+    ) ||
+    (encoding !== undefined && encoding.toLowerCase() !== 'identity')
+  ) {
+    return { error: catalogError(c, 415, 'UNSUPPORTED_MEDIA_TYPE') };
+  }
+  const chunks: Uint8Array[] = [];
+  let length = 0;
+  const stream = c.req.raw.body;
+  // Native HTTP byte streams support bounded BYOB reads. Default streams from
+  // code-only adapters cannot control producer chunk size; reject their first
+  // overflowing chunk without copying/retaining it, rather than buffering it.
+  const byob = (() => {
+    try {
+      return stream?.getReader({ mode: 'byob' });
+    } catch {
+      return undefined;
+    }
+  })();
+  const reader = byob ? undefined : stream?.getReader();
+  // One extra byte is the necessary overflow probe at the exact limit.
+  const read = byob
+    ? () =>
+        byob.read(new Uint8Array(Math.min(8192, maximumBodyBytes + 1 - length)))
+    : reader
+      ? () => reader.read()
+      : undefined;
+  if (read) {
+    try {
+      while (true) {
+        const { done, value } = await read();
+        if (done) break;
+        length += value.byteLength;
+        if (length > maximumBodyBytes) {
+          return { error: catalogError(c, 413, 'PAYLOAD_TOO_LARGE') };
+        }
+        if (value.byteLength > 0) chunks.push(value);
+      }
+    } finally {
+      if (byob) releaseBodyReader(byob);
+      if (reader) releaseBodyReader(reader);
+    }
+  }
+  const bytes = new Uint8Array(length);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  try {
+    const input: unknown = JSON.parse(
+      new TextDecoder('utf-8', { fatal: true, ignoreBOM: false }).decode(bytes),
+    );
+    return { input };
+  } catch {
+    return { error: catalogError(c, 400, 'INVALID_JSON') };
   }
 };
 
@@ -135,7 +219,13 @@ const runCatalog = async <A>(
   if (Option.isSome(failure) && failure.value instanceof CatalogFailure) {
     switch (failure.value.code) {
       case 'PUBLICATION_WITHDRAWN':
-        return catalogError(c, 409, 'PUBLICATION_WITHDRAWN');
+      case 'PUBLICATION_GENERATION_MISMATCH':
+      case 'SNAPSHOT_CONFLICT':
+        return catalogError(c, 409, failure.value.code);
+      case 'SOURCE_NOT_APPROVED':
+        return catalogError(c, 403, failure.value.code);
+      case 'VALIDATION_FAILED':
+        return catalogError(c, 422, failure.value.code, failure.value.issues);
       case 'SERVICE_UNAVAILABLE':
         return catalogError(c, 503, 'SERVICE_UNAVAILABLE');
       case 'INTERNAL_SERVER_ERROR':
@@ -179,6 +269,31 @@ export const mountCatalog = (
         const { steam_app_id, generation, minimum_observed_at } =
           yield* catalog.acquireAuthorization(steamAppId);
         return { steam_app_id, generation, minimum_observed_at };
+      }),
+    );
+  });
+
+  app.put(`${prefix}/:steamAppId/snapshot`, async (c) => {
+    const denied = authenticate(c, 'ingestion', options);
+    if (denied) return denied;
+    const steamAppId = parseAppId(c.req.param('steamAppId'));
+    if (steamAppId === undefined) return catalogError(c, 400, 'INVALID_APP_ID');
+    const body = await readSnapshotBody(c);
+    if (body.error) return body.error;
+
+    return runCatalog(
+      c,
+      options,
+      Effect.gen(function* () {
+        const catalog = yield* Catalog;
+        const { steam_app_id, outcome, current_observed_at } =
+          yield* catalog.submitSnapshot(
+            steamAppId,
+            c.req.header('X-Publication-Generation'),
+            body.input,
+            c.env.APPROVED_SNAPSHOT_SOURCES,
+          );
+        return { steam_app_id, outcome, current_observed_at };
       }),
     );
   });
