@@ -12,6 +12,7 @@ import { fileURLToPath, URL } from 'node:url';
 import { promisify } from 'node:util';
 import { Schema } from 'effect';
 import { expect, it } from 'vite-plus/test';
+import { verifyHttpLifecycle } from './catalog-lifecycle';
 
 const exec = promisify(execFile);
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -375,6 +376,8 @@ it('persists generation-fenced snapshots and publication changes, serves only el
       'synthetic-lookup-withdrawn-generation',
       'synthetic-lookup-empty-generation',
       'synthetic-delivery-1',
+      'synthetic-lifecycle-observation-',
+      'Synthetic Lifecycle Observation',
       'https://catalog.example.invalid/apps/1001',
       'select steam_app_id',
       'D1_ERROR',
@@ -1364,7 +1367,7 @@ it('persists generation-fenced snapshots and publication changes, serves only el
       }
       expect((await inspect(4001)).state).toBe('uninitialized');
       expect(await json('/fixture/fail/4001')).toEqual({
-        error: { code: 'SERVICE_UNAVAILABLE' },
+        error: { code: 'INTERNAL_SERVER_ERROR' },
       });
       expect(await inspect(4001)).toEqual({
         steam_app_id: 4001,
@@ -1526,7 +1529,7 @@ it('persists generation-fenced snapshots and publication changes, serves only el
           rollbackFirst,
           'submit-fail',
         ),
-      ).toEqual({ error: { code: 'SERVICE_UNAVAILABLE' } });
+      ).toEqual({ error: { code: 'INTERNAL_SERVER_ERROR' } });
       expect(await auditSnapshot(4101)).toBeNull();
       expect(await inspect(4101)).toEqual(rollbackControl);
       expect(
@@ -1551,7 +1554,7 @@ it('persists generation-fenced snapshots and publication changes, serves only el
           rollbackReplacement,
           'submit-fail',
         ),
-      ).toEqual({ error: { code: 'SERVICE_UNAVAILABLE' } });
+      ).toEqual({ error: { code: 'INTERNAL_SERVER_ERROR' } });
       expect(await auditSnapshot(4101)).toEqual(rollbackRow);
       expect(await inspect(4101)).toEqual(rollbackControl);
       // Retry unchanged payload/event/generation after the uncertain failure.
@@ -2650,9 +2653,9 @@ it('persists generation-fenced snapshots and publication changes, serves only el
       });
       expect(await inspect(2002)).toEqual(withdrawn);
       const failure = await http('/fixture/http-failure', ingestion, 'POST');
-      expect(failure.status).toBe(503);
+      expect(failure.status).toBe(500);
       expect(failure.body).toEqual({
-        error: { code: 'SERVICE_UNAVAILABLE', request_id: failure.requestId },
+        error: { code: 'INTERNAL_SERVER_ERROR', request_id: failure.requestId },
       });
       expect(await inspect(5002)).toEqual({
         steam_app_id: 5002,
@@ -3134,6 +3137,13 @@ it('persists generation-fenced snapshots and publication changes, serves only el
       expect(await inspect(7004)).toEqual(retriedControl);
       expect(await auditSnapshot(7004)).toBeNull();
 
+      const lifecycle = await verifyHttpLifecycle({
+        url,
+        ingestion,
+        admin,
+        auditSnapshot,
+      });
+
       expect(await json('/fixture/audit')).toEqual({
         tables: [
           { name: '__alchemy_migrations' },
@@ -3150,6 +3160,14 @@ it('persists generation-fenced snapshots and publication changes, serves only el
         history: [{ count: 3 }],
       });
       return {
+        lifecycle,
+        lifecycleState: await Promise.all(
+          lifecycle.ids.map(async (id) => ({
+            id,
+            control: await inspect(id),
+            snapshot: await auditSnapshot(id),
+          })),
+        ),
         publicApplications: [
           windowPublicApplication,
           lastKnownHttpApplication,
@@ -3179,6 +3197,13 @@ it('persists generation-fenced snapshots and publication changes, serves only el
 
     // New workerd/Alchemy process, identical local D1 storage. No reseeding.
     await withWorker(async () => {
+      const freshRestarted = await lookupHttp(8001);
+      expect(freshRestarted.status).toBe(200);
+      expect(freshRestarted.body).toEqual(persisted.lifecycle.publicFresh);
+      for (const { id, control, snapshot } of persisted.lifecycleState) {
+        expect(await inspect(id)).toEqual(control);
+        expect(await auditSnapshot(id)).toEqual(snapshot);
+      }
       for (const application of persisted.publicApplications) {
         const restarted = await lookupHttp(application.steam_app_id);
         expect(restarted.status).toBe(200);

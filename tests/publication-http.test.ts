@@ -220,6 +220,7 @@ describe('publication command HTTP boundary (not D1 atomicity evidence)', () => 
         { ...env, INGESTION_BEARER_TOKEN: '' },
         { ...env, PUBLICATION_ADMIN_BEARER_TOKEN: '' },
         { ...env, PUBLICATION_ADMIN_BEARER_TOKEN: 123 },
+        { ...env, INGESTION_BEARER_TOKEN: 123 },
         { ...env, PUBLICATION_ADMIN_BEARER_TOKEN: env.INGESTION_BEARER_TOKEN },
       ].map((config) => ({
         config,
@@ -366,6 +367,9 @@ describe('publication command HTTP boundary (not D1 atomicity evidence)', () => 
 
   it('rotates admin and ingestion credentials independently on the same app without retaining old credentials', async () => {
     const { put, env } = fixture();
+    const before = await put();
+    expect(before.status).toBe(200);
+    transport(before);
     const adminRotated = {
       ...env,
       PUBLICATION_ADMIN_BEARER_TOKEN: crypto.randomUUID(),

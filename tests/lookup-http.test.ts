@@ -108,15 +108,11 @@ const fixture = (example: (typeof examples)[number] = examples[0]) => {
       provenance: { ...example.provenance, ...privateFields },
     }),
   );
-  return {
-    lookup,
-    app: createApp({
-      catalogLayer: Layer.succeed(Catalog, {
-        ...unused,
-        lookupApplication: lookup,
-      }),
-    }),
-  };
+  const catalogLayer = Layer.succeed(Catalog, {
+    ...unused,
+    lookupApplication: lookup,
+  });
+  return { lookup, catalogLayer, app: createApp({ catalogLayer }) };
 };
 const transport = (response: Response) => {
   expect(response.headers.get('cache-control')).toBe('no-store');
@@ -171,6 +167,75 @@ describe('anonymous Steam Application lookup HTTP boundary', () => {
     } finally {
       network.mockRestore();
     }
+  });
+
+  it('keeps public lookup anonymous across private configuration failures and both rotations', async () => {
+    const { app } = fixture();
+    const env = {
+      INGESTION_BEARER_TOKEN: crypto.randomUUID(),
+      PUBLICATION_ADMIN_BEARER_TOKEN: crypto.randomUUID(),
+    };
+    const rotated = {
+      INGESTION_BEARER_TOKEN: crypto.randomUUID(),
+      PUBLICATION_ADMIN_BEARER_TOKEN: crypto.randomUUID(),
+    };
+    const configs = [
+      {},
+      { ...env, INGESTION_BEARER_TOKEN: undefined },
+      { ...env, PUBLICATION_ADMIN_BEARER_TOKEN: undefined },
+      { ...env, INGESTION_BEARER_TOKEN: '' },
+      { ...env, PUBLICATION_ADMIN_BEARER_TOKEN: '' },
+      { ...env, INGESTION_BEARER_TOKEN: 123 },
+      { ...env, PUBLICATION_ADMIN_BEARER_TOKEN: 123 },
+      { ...env, PUBLICATION_ADMIN_BEARER_TOKEN: env.INGESTION_BEARER_TOKEN },
+      env,
+      { ...env, INGESTION_BEARER_TOKEN: rotated.INGESTION_BEARER_TOKEN },
+      {
+        ...env,
+        PUBLICATION_ADMIN_BEARER_TOKEN: rotated.PUBLICATION_ADMIN_BEARER_TOKEN,
+      },
+      rotated,
+    ];
+    for (const config of configs) {
+      for (const authorization of [
+        undefined,
+        `Bearer ${env.INGESTION_BEARER_TOKEN}`,
+        `Bearer ${env.PUBLICATION_ADMIN_BEARER_TOKEN}`,
+        `Bearer ${rotated.INGESTION_BEARER_TOKEN}`,
+        `Bearer ${rotated.PUBLICATION_ADMIN_BEARER_TOKEN}`,
+        `Basic ${crypto.randomUUID()}`,
+      ]) {
+        const headers = new Headers({ 'X-Request-ID': 'caller-owned-id' });
+        if (authorization) headers.set('Authorization', authorization);
+        const response = await app.request(
+          `${prefix}/1001`,
+          { headers },
+          config,
+        );
+        expect(response.status).toBe(200);
+        transport(response);
+        expect(await response.json()).toEqual({ data: examples[0] });
+      }
+    }
+  });
+
+  it('requires HTTPS for anonymous lookup outside the explicit local-test seam', async () => {
+    const { app, lookup, catalogLayer } = fixture();
+    const url = 'http://localhost/v1/steam/applications/1001';
+    for (const config of [
+      {},
+      { ALLOW_INSECURE_LOCAL_TEST: 'true', ENVIRONMENT: 'test' },
+    ]) {
+      await error(await app.request(url, undefined, config), 403, 'FORBIDDEN');
+    }
+    expect(lookup).not.toHaveBeenCalled();
+    const response = await createApp({
+      catalogLayer,
+      allowInsecureLocalTest: true,
+    }).request(url);
+    expect(response.status).toBe(200);
+    transport(response);
+    expect(await response.json()).toEqual({ data: examples[0] });
   });
 
   it.each([

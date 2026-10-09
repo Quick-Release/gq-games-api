@@ -9,10 +9,12 @@ import { Database } from '../../src/db/database';
 import { applicationSnapshot, publicationControl } from '../../src/db/schema';
 import type { WorkerEnv } from '../../src/env';
 import { Catalog } from '../../src/services/catalog';
+import { createHttpGates } from './http-gates';
 
 // This entire adapter is bundled ONLY by catalog-stack.ts. There are no
 // production routes, env switches, or service hooks for seeds/faults/clocks.
 const app = createApp({ allowInsecureLocalTest: true });
+const httpGates = createHttpGates();
 const approvedSources = JSON.stringify([
   ...[
     'https://catalog.example.invalid/apps/1001',
@@ -343,7 +345,7 @@ const publicationContenders = (
     };
   });
 
-export default {
+const catalogWorker = {
   async fetch(request: Request, env: WorkerEnv, ctx: ExecutionContext) {
     const url = new URL(request.url);
     if (url.pathname === '/ready') return new Response('ready');
@@ -379,6 +381,16 @@ export default {
             '/internal/v1/steam/applications/7004/publication',
             request.url,
           ),
+          request,
+        ),
+        { ...env, DB: failingBatchBinding(env.DB) },
+        ctx,
+      );
+    }
+    if (url.pathname === '/fixture/http-snapshot-failure') {
+      return app.fetch(
+        new Request(
+          new URL('/internal/v1/steam/applications/8004/snapshot', request.url),
           request,
         ),
         { ...env, DB: failingBatchBinding(env.DB) },
@@ -619,6 +631,23 @@ export default {
           Effect.provide(catalogLayer),
           Effect.provide(Database.layer(binding)),
         ),
+      ),
+    );
+  },
+} satisfies ExportedHandler<WorkerEnv>;
+
+export default {
+  async fetch(request: Request, env: WorkerEnv, ctx: ExecutionContext) {
+    const control = await httpGates.control(request);
+    if (control) return control;
+    // Only this local fixture sees the gate header. The production Hono app,
+    // Effect layers, credentials, source policy, and real D1 remain unchanged;
+    // replace just the binding for the lifetime of this HTTP invocation.
+    return httpGates.run(request, env.DB, (db) =>
+      catalogWorker.fetch(
+        request,
+        db === env.DB ? env : { ...env, DB: db },
+        ctx,
       ),
     );
   },

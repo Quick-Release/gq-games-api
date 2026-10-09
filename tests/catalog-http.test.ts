@@ -165,6 +165,13 @@ describe('catalog HTTP boundary', () => {
     const { app, env } = fixture();
     let current = env;
     for (const { suffix, method, role } of routes) {
+      const before = await app.request(
+        `${prefix}/1001/${suffix}`,
+        { method, headers: { Authorization: `Bearer ${current[role]}` } },
+        current,
+      );
+      expect(before.status).toBe(200);
+      expectTransport(before);
       const rotated = { ...current, [role]: crypto.randomUUID() };
       await expectError(
         await app.request(
@@ -280,6 +287,7 @@ describe('catalog HTTP boundary', () => {
         { ...env, INGESTION_BEARER_TOKEN: '' },
         { ...env, PUBLICATION_ADMIN_BEARER_TOKEN: '' },
         { ...env, INGESTION_BEARER_TOKEN: 123 },
+        { ...env, PUBLICATION_ADMIN_BEARER_TOKEN: 123 },
         { ...env, PUBLICATION_ADMIN_BEARER_TOKEN: env.INGESTION_BEARER_TOKEN },
       ];
       for (const config of configs) {

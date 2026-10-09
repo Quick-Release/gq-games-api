@@ -1,37 +1,44 @@
 # First Steam game schema research
 
 Research date: 2026-10-07. Recheck upstream documentation and access terms
-before implementation; this is a point-in-time investigation.
+before any real-source collection; this is a point-in-time investigation.
 
 ## Status and recommendation
 
-**Research evidence and agreed design direction; no implementation.** The
-initial consumer contract is **Steam App ID lookup for application identity and
-release metadata**, including verified Game, Demo, and DLC product types. Use
-one application catalog record per App ID; do not introduce canonical Game
-identities, editorial edition labels, or cross-release grouping initially. These
-design choices were confirmed in the design interview; they do not approve an
-upstream source or authorize implementation. Do not persist player counts or
-peaks, player histories, reviews or ratings, followers, rankings, prices or
-price histories, or ownership estimates. These are excluded, not deferred or
-optional tables. The upstream findings below remain research evidence, not
-storage requirements.
+**Point-in-time upstream research; synthetic local catalog implemented.** The
+five catalog routes, reviewed control/snapshot schema, and local acceptance
+fixtures implement the agreed metadata-only design, including verified composed
+lifecycle/recovery behavior under issue #6. See the
+[acceptance matrix](../catalog-acceptance.md) for the completed local quality
+run. No real source, private producer integration, provisioning, or deployment
+is approved. The initial consumer contract is **Steam App ID lookup for
+application identity and release metadata**, including verified Game, Demo, and
+DLC product types. Use one application catalog record per App ID; do not
+introduce canonical Game identities, editorial edition labels, or cross-release
+grouping initially. These design choices were confirmed in the design interview;
+they do not approve an upstream source or authorize implementation. Do not
+persist player counts or peaks, player histories, reviews or ratings, followers,
+rankings, prices or price histories, or ownership estimates. These are excluded,
+not deferred or optional tables. The upstream findings below remain research
+evidence, not storage requirements.
 
-The repository already has D1, Drizzle's native Effect D1 service, and
-Alchemy-owned migrations, but its application schema is empty. The pinned
-versions are Alchemy `2.0.0-beta.81`, Drizzle ORM/Kit `1.0.0-rc.5-ab785fc`, and
-Effect/D1 SQL client `4.0.1`. This note does not change that foundation or
-authorize collection, migration generation, or deployment. Sources:
-[database](../database.md), [schema](../../src/db/schema.ts),
-[package versions](../../package.json), [contributor guidance](../../AGENTS.md).
+The repository has D1, Drizzle's native Effect D1 service, Alchemy-owned
+migrations, and separate minimal publication-control/complete-snapshot tables.
+The pinned versions are Alchemy `2.0.0-beta.81`, Drizzle ORM/Kit
+`1.0.0-rc.5-ab785fc`, and Effect/D1 SQL client `4.0.1`. This note does not
+change that foundation or authorize real-source collection, further migration
+generation, or deployment. Sources: [database](../database.md),
+[schema](../../src/db/schema.ts), [package versions](../../package.json),
+[contributor guidance](../../AGENTS.md).
 
-The existing architecture proposes off-request-path ingestion of approved,
-normalized records with provenance. Source rights and the private ingestion
-contract remain prerequisites, not implemented behavior. Canonical Game
-reconciliation is outside the initial contract. Sources:
-[architecture](architecture.md), [backlog](backlog.md). The design interview
-recorded the domain vocabulary in the root [glossary](../../GLOSSARY.md). See
-the [domain documentation convention](../agents/domain.md).
+The implemented synthetic architecture keeps collection off the request path and
+serves complete validated observations with provenance. Real source rights and
+the private producer's contract adoption remain prerequisites, not implemented
+integration. Canonical Game reconciliation is outside the initial contract.
+Sources: [architecture](architecture.md), [backlog](backlog.md). The design
+interview recorded the domain vocabulary in the root
+[glossary](../../GLOSSARY.md). See the
+[domain documentation convention](../agents/domain.md).
 
 ## Evidence boundaries
 
@@ -59,9 +66,11 @@ the [domain documentation convention](../agents/domain.md).
   not for Steam-specific field contracts.
 - **Design direction:** the application-only boundary, metadata scope, snapshot
   semantics, and publication lifecycle below were agreed during the design
-  interview. Logical field names and constraints remain recommendations, not SQL
-  or an approved ingestion contract. None are upstream facts or implemented
-  repository behavior. The earlier canonical Game grouping is not adopted.
+  interview and subsequently implemented locally with synthetic fixtures.
+  Historical logical field names below are not the physical schema; consult
+  `src/db/schema.ts` and reviewed migrations for implementation. Neither the
+  contract nor its implementation verifies upstream field contracts or rights.
+  The earlier canonical Game grouping is not adopted.
 
 Some Firecrawl responses were cached. A retrieved page is evidence of returned
 content, not proof of a simultaneous live upstream measurement. Exact volatile
@@ -271,23 +280,26 @@ SteamDB's formatted table displays currency amounts, not an integer API field
 contract. Source: [seed price table](https://steamdb.info/app/3240220/charts/).
 These price observations do not justify any fields in the metadata-only schema.
 
-## Agreed catalog design and proposed D1 representation
+## Agreed catalog design and historical logical representation
 
-These are logical field/constraint recommendations, **not SQL, Drizzle code, or
-a migration**. Propose `steam_applications` for the single application catalog;
-no `games` or `steam_releases` table is needed for App ID lookup. Publication
-withdrawal uses separate durable control with generation fencing, not a flag
-inside deletable metadata. The agreed HTTP, payload, and atomic-persistence
-requirements are recorded in the
-[catalog contract](../steam-catalog-contract.md). The physical schema and
-permitted retention still require review; this note is not a migration.
+The table below records the interview's logical field recommendations, **not
+SQL, Drizzle code, or a migration**. Its proposed name `steam_applications` is
+not the implemented table name: the reviewed physical schema uses
+`steam_application_snapshot` and `steam_application_publication`. See
+[database guidance](../database.md). No `games` or `steam_releases` table is
+needed for App ID lookup. Publication withdrawal uses separate durable control
+with generation fencing, not a flag inside deletable metadata. The agreed HTTP,
+payload, and atomic-persistence requirements are recorded in the
+[catalog contract](../steam-catalog-contract.md). The reviewed synthetic
+physical schema/migrations exist; actual source rights and permitted control
+retention remain unapproved. This research note is not a migration.
 
 Do not add a generic entity/attribute store or a raw-upstream JSON blob;
 excluded data must not be retained indirectly inside metadata JSON, stored
 ingestion payloads, or history tables. Continue using synthetic records until
 source access, storage, and public-redistribution rights are approved.
 
-### `steam_applications`: one approved English snapshot per App ID
+### Historical `steam_applications` proposal: one English snapshot per App ID
 
 | Field                                | Proposed storage and meaning                                                     |
 | ------------------------------------ | -------------------------------------------------------------------------------- |
@@ -360,13 +372,23 @@ For an admitted, publishable application:
   invented observation timestamp. The contract requires separate ingestion/admin
   bearer roles, source-policy matching, publication-generation fencing, an
   observation floor and five-minute future tolerance, versioned routes, and
-  atomic outcome classification. Producer clock synchronization and these exact
-  behaviors still need implementation and synthetic workerd verification.
+  atomic outcome classification. These server behaviors have synthetic Node and
+  workerd acceptance coverage and a completed local quality run. Actual private
+  producer adoption and clock synchronization remain gates.
+- After transport/server uncertainty, retry the same body/event/generation; lost
+  successful responses can return `unchanged`, or `ignored_stale` after a newer
+  accepted observation. This is not replay-ledger/exactly-once behavior.
+  Obsolete generations require reacquisition and genuine recollection. The
+  second-precision floor is a guardrail, not proof of collection order.
 
-Validate eventual persistence and ordering behavior with synthetic workerd
-integration tests. The D1 client's transaction API is unsupported; evaluate
-atomic D1 operations/batches where necessary and preserve Alchemy migration
-ownership. Source: [database boundary and validation](../database.md).
+The composed workerd lifecycle constructs observations after acquisition and
+stamps actual local Unix seconds, waiting for genuinely newer observations
+rather than inventing floor-relative timestamps. Fixture-only gates order real
+HTTP batches/reads and delay captured results through competing commits;
+rollback and restart remain synthetic local acceptance. Interactive transactions
+are unsupported; the implementation uses ordered native D1 batches and
+Alchemy-owned migrations. Sources: [database boundary](../database.md),
+[acceptance matrix](../catalog-acceptance.md).
 
 ### Last-known serving and publication withdrawal
 
@@ -375,8 +397,10 @@ freshness promise, TTL, or stale/current flag is part of the initial contract.
 Do not infer release status from the clock or fetch upstream on the request
 path. The [catalog contract](../steam-catalog-contract.md) defines anonymous
 versioned lookup, private role-separated writes, response shapes, and no-store
-primary reads. None of these catalog routes is implemented; production abuse
-limits and access budgets remain gates.
+primary reads. All five catalog routes are implemented locally with synthetic
+policies; production abuse limits, operations, credentials, and access budgets
+remain gates. `/health` reports process health only, not catalog/crawler
+readiness.
 
 An upstream omission or delisting does not automatically delete or withdraw a
 record. Publication withdrawal is an explicit privileged action independent of
@@ -384,11 +408,12 @@ snapshot ingestion. It atomically advances publication generation, marks
 withdrawn, and deletes metadata. Separate durable control retains only App ID,
 eligible/withdrawn state, generation, and generation-issued timestamp, subject
 to express retention approval. Admin transitions compare an expected generation;
-ordinary ingestion cannot change control. Reinstatement authorizes a new
-generation without restoring metadata, and requires fresh authorized collection.
-Old queued generations cannot republish. There is no control expiry/forget
-operation initially. Real publication is blocked if minimal-control retention is
-not permitted.
+ordinary ingestion cannot change control. After an uncertain admin response, GET
+and reconcile; do not blindly substitute a newer expected generation.
+Reinstatement authorizes a new generation without restoring metadata, and
+requires fresh authorized collection. Old queued generations cannot republish.
+There is no control expiry/forget operation initially. Real publication is
+blocked if minimal-control retention is not permitted.
 
 Lookups whose primary database read starts after withdrawal commits must not
 serve metadata; previously read/in-flight responses and consumer-held copies
@@ -409,9 +434,9 @@ selected.
 | Product type / base App ID / release status/window  | Populate only after approved-source contract verification; no base link or release status is fabricated from title or date                                                                                                                    |
 | Provenance timestamps/event identifiers             | Generated by future approved ingestion; none fabricated from scrape metadata or relative page ages                                                                                                                                            |
 
-This is a conceptual mapping, not a seed dataset. The first implementation
-should continue using synthetic fixtures while rights and ingestion are
-reviewed, as required by [contributor guidance](../../AGENTS.md) and the
+This is a conceptual mapping, not a seed dataset. The implemented local catalog
+continues using synthetic fixtures while rights and private producer adoption
+are reviewed, as required by [contributor guidance](../../AGENTS.md) and the
 [research backlog](backlog.md).
 
 ## Access, rights, and redistribution gate
@@ -473,15 +498,17 @@ browser challenge bypass was used in this research.
 | [Rockstar PC upgrade announcement](https://www.rockstargames.com/newswire/article/akk98a4o755825/free-upgrade-for-grand-theft-auto-v-on-pc-coming-march-4)                                                                                                                | Publisher corroboration of previous/upgraded PC versions and separate Online sessions; no other Steam IDs verified                                                     |
 | [Valve API terms](https://steamcommunity.com/dev/apiterms) and [Subscriber Agreement](https://store.steampowered.com/subscriber_agreement/)                                                                                                                               | Conditional access/distribution terms and content/automation restrictions; commercial API suitability still requires review                                            |
 
-**Implementation planning:** the identity boundary and the
+**Implementation status:** the identity boundary and the
 [catalog contract](../steam-catalog-contract.md)'s HTTP/payload, equality,
-ordering, atomicity, and generation-fenced lifecycle requirements are agreed,
-not implemented. Plan synthetic HTTP and workerd acceptance tests, then review
-the physical schema and generated SQL under the existing
-[database process](../database.md). No migration or implementation is authorized
-by this note. **Before real publication:** select a permitted metadata source,
-verify its actual field contracts, resolve redistribution and minimal-control
-retention rights, agree the private producer's integration behavior, and approve
-production security/operational limits and deployment. Player observations,
-histories, reviews, followers, rankings, prices, and ownership estimates remain
-outside scope; do not generate tables, columns, or collectors for them.
+ordering, atomicity, and generation-fenced lifecycle requirements are
+implemented as a synthetic local capability under parent #1. Reviewed SQL and
+schema remain under the existing [database process](../database.md); the
+[acceptance matrix](../catalog-acceptance.md) separates Node HTTP coverage from
+workerd/D1 behavior and completed local command results. This note independently
+authorizes no collection, migration, provisioning, or deployment. **Before real
+publication:** select a permitted metadata source, verify its actual field
+contracts, resolve redistribution and minimal-control retention rights, agree
+the private producer's integration behavior, and approve production
+security/operational limits and deployment. Player observations, histories,
+reviews, followers, rankings, prices, and ownership estimates remain outside
+scope; do not generate tables, columns, or collectors for them.

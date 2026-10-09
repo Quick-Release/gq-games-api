@@ -22,7 +22,10 @@ tests/app.test.ts        Node unit tests of the HTTP boundary
 tests/tooling.test.ts    Tooling configuration regression tests
 tests/database.test.ts   Database service unit tests with a D1 stub
 tests/integration/       Real local workerd catalog + D1/Drizzle tests
-docs/research/           Proposed architecture and experiments
+  catalog-lifecycle.ts    Composed HTTP acceptance inside catalog.test.ts
+tests/fixtures/http-gates.ts Local-only real D1 batch/read coordination
+docs/catalog-acceptance.md Parent HTTP/D1 category-to-test matrix
+docs/research/           Implementation status, research, and remaining gates
 ```
 
 `alchemy.run.ts` owns the Worker entrypoint, compatibility settings, bindings,
@@ -63,8 +66,40 @@ provider modes in the same stage can replace real resources. The scripts reserve
 Node unit tests exercise Hono, tooling configuration, and the database service
 with a stub; they do not validate workerd or Cloudflare bindings. Run
 `pnpm test:integration` for the synthetic Drizzle/D1 fixture in real local
-workerd, including migrations and restart behavior. Smoke-test both dev and
-preview against `/health` when changing the bundler/runtime.
+workerd, including migrations and restart behavior. The
+[acceptance matrix](catalog-acceptance.md) maps every parent HTTP/D1 category to
+actual files and searchable sections and records the completed issue #6 local
+quality run. Smoke-test both dev and preview against `/health` when changing the
+bundler/runtime.
+
+### Composed synthetic lifecycle
+
+`tests/integration/catalog.test.ts` invokes `verifyHttpLifecycle` from
+`tests/integration/catalog-lifecycle.ts` inside its existing isolated workerd
+fixture; it is not a second test runner or migration executor. HTTP requests
+cross Hono authentication/transport, Effect services, and native D1. The
+synthetic producer acquires first, then constructs an observation stamped with
+the actual local Unix-second clock, waiting for a genuinely later second when
+needed. No accepted lifecycle timestamp is invented as `floor + 1`. Exact
+synthetic-clock service cases remain useful for validation boundaries; a
+second-precision server floor cannot establish collection order.
+
+Snapshot PUTs respond synchronously after commit. A discarded successful
+response is retried with the same body/event/generation, first as `unchanged`,
+then as `ignored_stale` after a genuinely newer accepted observation. After an
+uncertain admin response, GET control and reconcile; do not silently replace
+`expected_generation`. Reinstatement restores nothing and needs new
+authorization and genuinely fresh recollection, not a relabeled queued payload.
+
+`tests/fixtures/http-gates.ts` holds real batches/primary reads before execution
+and holds their actual results after completion. The map retains only ephemeral
+latched coordination signals and counters, never bodies or results. Explicit
+release order, not sleep-only races, establishes acquisition/submission/admin
+interleavings and delayed per-operation classifications. An earlier primary read
+can finish with 200 after withdrawal; a primary read begun after withdrawal
+commits must return 404. The fixture also injects a later-statement snapshot
+HTTP failure, alongside existing service/control/withdrawal rollback and restart
+checks. No fault/gate endpoint exists in the production Worker.
 
 ## Vite+ tooling
 
@@ -118,10 +153,11 @@ Lookup is last-known synthetic data, not a live upstream read or freshness
 promise. One primary D1 query joins existing snapshots to eligible control;
 absent/withdrawn cases share a safe 404. No-store and server request IDs apply
 to every catalog response, including errors. Consumer-held copies and responses
-already read cannot be revoked. Synthetic local workerd verifies
+already read cannot be revoked. Synthetic local workerd acceptance exercises
 withdrawal/reinstatement, stale-generation fencing, coordinated commit-order
-races, and atomic rollback; real-source approval and express minimal-control
-retention permission remain required, alongside production
+races, and atomic rollback; consult the matrix and final command results rather
+than treating coverage as a passing run. Real-source approval and express
+minimal-control retention permission remain required, alongside production
 operational/credential rollout and deployment approval.
 
 ## State and secrets
@@ -155,10 +191,10 @@ as Worker secret_text values. Supply independently generated opaque values
 through protected local configuration/environment; never put them in examples,
 SQL, fixtures, or logs. Empty defaults permit scaffold/health development but
 private requests return 503 unless both secrets are present and distinct. HTTPS
-is required by the production application even on the regular local HTTP dev
-server; the explicit insecure factory option is reserved for tests, not a Worker
-environment switch. No rotation rollout or production credential setup has been
-performed.
+is required for all five catalog routes, including anonymous lookup, even on the
+regular local HTTP dev server; the explicit insecure factory option is reserved
+for tests, not a Worker environment switch. No rotation rollout or production
+credential setup has been performed.
 
 `APPROVED_SNAPSHOT_SOURCES` is a non-secret Worker Config.String binding with an
 empty deny-all default. Supply a JSON array of exact `source_url` and

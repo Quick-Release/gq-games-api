@@ -57,6 +57,18 @@ export const catalogError = (
     status,
   );
 
+const requireHttps = (
+  c: Context<CatalogHttpEnv>,
+  options: CatalogHttpOptions,
+) => {
+  if (
+    new URL(c.req.url).protocol !== 'https:' &&
+    !options.allowInsecureLocalTest
+  ) {
+    return catalogError(c, 403, 'FORBIDDEN');
+  }
+};
+
 const authenticate = (
   c: Context<CatalogHttpEnv>,
   role: 'ingestion' | 'admin',
@@ -83,12 +95,7 @@ const authenticate = (
   if (credential !== (role === 'ingestion' ? ingestion : admin)) {
     return catalogError(c, 403, 'FORBIDDEN');
   }
-  if (
-    new URL(c.req.url).protocol !== 'https:' &&
-    !options.allowInsecureLocalTest
-  ) {
-    return catalogError(c, 403, 'FORBIDDEN');
-  }
+  return requireHttps(c, options);
 };
 
 const parseAppId = (value: string) =>
@@ -262,6 +269,8 @@ export const mountCatalog = (
   }
 
   app.get(`${publicPrefix}/:steamAppId`, async (c) => {
+    const denied = requireHttps(c, options);
+    if (denied) return denied;
     const steamAppId = parseAppId(c.req.param('steamAppId'));
     if (steamAppId === undefined) return catalogError(c, 400, 'INVALID_APP_ID');
 

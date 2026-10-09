@@ -1,85 +1,104 @@
 # Architecture direction
 
-## Confirmed choices
+## Implemented synthetic capability
 
-Cloudflare Workers, D1, Alchemy, Effect, Hono, Drizzle, and Vite+, with an
-eventual `gq-crawl` integration. A D1 declaration, empty Drizzle application
-schema, and Effect-native query service now exist; the synthetic integration
-suite runs them locally in workerd. No remote infrastructure has been
-provisioned. The domain architecture below remains a proposal.
-
-## Proposed responsibilities
+Cloudflare Workers + D1, Alchemy v2, Effect 4, Hono, Drizzle's native Effect D1
+driver, and Vite+ are the pinned foundation. The application now has separate
+minimal publication-control and complete-snapshot tables, reviewed migrations,
+and five catalog routes: anonymous Steam App ID lookup, private ingestion
+acquisition/submission, and admin publication inspection/change. `/` and
+process-only `/health` remain; health does not test D1 or crawler readiness. No
+remote infrastructure, deployment, real source policy, or private `gq-crawl`
+adapter is implemented.
 
 ```text
-Permitted source sites/APIs
+Synthetic producer (local acceptance only)
+  acquire publication generation -> genuinely collect -> submit full snapshot
          |
          v
-Private gq-crawl ingestion
-  fetch -> extract -> validate -> normalize -> provenance
-         |
-         | versioned, authenticated delivery (transport undecided)
-         v
-Private ingestion boundary
-  schema validation -> deduplication -> idempotent persistence
+Hono HTTP boundary: roles, HTTPS, bounded transport, safe responses
          |
          v
-Approved, normalized game records
+Effect Catalog service: validation, exact synthetic source policy, lifecycle
          |
          v
-Cloudflare Worker: Hono -> Effect services -> storage/cache
+Native Effect D1: one ordered atomic batch per mutation decision
+  minimal publication control + deletable complete snapshot
          |
          v
-Public, versioned read API
+Anonymous lookup: one primary eligibility/snapshot query -> public projection
 ```
 
-Crawling and extraction should not occur on the public request path. The API
-should serve approved records, with source attribution and freshness semantics,
-rather than exposing raw upstream content. Public API and ingestion can be
-separate Workers; decide after studying isolation and operational needs.
+Hono provides Catalog and Database layers per request, not a global
+first-binding singleton. Infrastructure belongs in `alchemy.run.ts` and never
+enters the Worker bundle. Alchemy alone owns migration application/history;
+Drizzle Kit only generates/checks SQL. See [database tooling](../database.md)
+and [development](../development.md).
 
-## Candidate Cloudflare capabilities
+## Consistency and recovery
 
-| Capability | Candidate use                         | Decision needed                         |
-| ---------- | ------------------------------------- | --------------------------------------- |
-| Workers    | Hono HTTP API                         | Limits, region behavior, request budget |
-| D1         | Game identity, metadata, provenance   | Query patterns, indexing, scale         |
-| R2         | Private artifacts or larger documents | Retention, licensing, access policy     |
-| Queues     | Delivery and retry of ingestion jobs  | Contracts, DLQ, idempotency             |
-| Workflows  | Durable multi-step ingestion          | Whether orchestration belongs in crawl  |
-| KV/Cache   | Read optimization                     | Invalidation and consistency            |
+Acquisition initializes only absent control and preserves existing eligible
+generation/floor; it cannot lift withdrawal. Submission cannot initialize or
+change control. One atomic batch captures eligibility, generation/floor,
+ordering/equality, and mutation results; classification does not use a later
+post-write read. Interactive transactions, parallel Effects, and separate
+read/check/write calls are not substitutes.
 
-Do not provision all of these just because they are available. Start with
-measured requirements. Only D1 is declared/bound today; its application schema
-is empty. No queue, workflow, or crawler binding exists.
+Writes are synchronous: success follows commit. Retry an uncertain snapshot with
+the same body/event/generation; an identical replay can be `unchanged`, or
+`ignored_stale` after a newer accepted observation. There is no replay ledger or
+exactly-once guarantee. A newer correction needs genuine observation, not an
+invented timestamp. An obsolete generation needs reacquisition and recollection.
+The second-precision floor is a guardrail, not proof of acquire-before-collect;
+producer clocks must be synchronized.
 
-## Hono and Effect boundary
+Admin changes compare expected generations. Withdrawal advances control and
+purges all snapshot/event/provenance content, retaining only App ID, state,
+generation, and issued timestamp. Reinstatement restores no metadata. After an
+uncertain admin response, GET and reconcile rather than blindly adopting a new
+expectation. Upstream omission/delisting is not withdrawal.
 
-Hono handles HTTP concerns. Effect services should own normalization,
-validation, repository access, typed failures, retries, and resource management.
-Map expected failures to deliberate HTTP status codes; never serialize raw
-errors. Compose service Layers at the runtime boundary and scope disposable
-resources per request.
+Public reads serve last-known approved English metadata, with no upstream fetch,
+cache, TTL, inferred Release Status, or freshness promise. A primary query
+requires both eligible control and a snapshot. A read begun after withdrawal
+commits cannot serve metadata; an earlier read/in-flight response may complete,
+and consumer-held copies cannot be revoked by no-store.
 
-The scaffold runs a pure health Effect via `Effect.runPromise` and provides an
-Effect `Database` Layer for Drizzle/D1 queries. No domain tables, repositories,
-or game domain models exist yet. See [database tooling](../database.md). Alchemy
-v2 also uses Effect for infrastructure; infrastructure values must not enter the
-Worker runtime bundle. Binding inference uses erased type-only imports.
+## Local acceptance, not production proof
 
-## gq-crawl contract to investigate
+The [acceptance matrix](../catalog-acceptance.md) maps the parent's HTTP and D1
+categories to Node and workerd test sections and records the completed issue #6
+local quality run. `verifyHttpLifecycle` extends the existing isolated
+Alchemy/workerd fixture with actual post-acquisition local-clock observations,
+same-delivery lost-response retries, admin reconciliation, fresh reinstated
+publication, and restart. Fixture-only gates hold actual batches/primary reads
+and their results through competing commits; they store ephemeral latched
+coordination signals and counters, not payloads/results. Later-statement
+failures exercise rollback without a production fault endpoint.
 
-Define a contract together with the private ingestion project before
-implementing an adapter:
+Node HTTP doubles establish validation/security mappings, not D1 binding or
+transaction guarantees. Local workerd exercises the pinned stack, not production
+routing, global latency/outages, replication, source legality, or consumer
+recall.
 
-- Stable game identifiers, platform/edition identity, and duplicate resolution.
-- Payload schema version, event ID, source URL, observed time, and extraction
-  version. Distinguish absent, unknown, and removed fields.
-- Source-specific rights, attribution, permitted distribution, and deletion.
-- Authentication, payload limits, replay protection, and idempotency keys.
-- Retryable versus terminal failures, backpressure, dead-letter handling, and
-  reconciliation after partial writes.
-- Field-level provenance, freshness indicators, quality gates, and corrections.
+## Remaining decisions and approvals
 
-The public repository should contain the agreed interface and synthetic
-fixtures, not private source inventories, crawl artifacts, or copied private
-research.
+- Real source-by-field contracts, access/storage/public redistribution,
+  attribution, retention/deletion, and express permission for durable minimal
+  publication control. Exact URL/extractor matching is enforcement, not rights
+  approval; current policies admit reserved synthetic sources only.
+- Private `gq-crawl` adoption of the
+  [catalog contract](../steam-catalog-contract.md): full single-source English
+  snapshots, acquire-before-collect, synchronized clocks, source policy,
+  same-delivery retries, and fresh recollection. Public docs/fixtures must not
+  contain private source inventories, artifacts, or code.
+- Production access/abuse budgets, credential rotation/protected state,
+  monitoring/recovery, operational ownership, and deployment approval.
+- Measured App ID lookup cost/scale before considering any additional resource.
+  R2, Queues, Workflows, KV/cache, Sessions/replicas, split Workers, discovery,
+  canonical Game grouping, patches, and cross-app atomic ingestion are **not
+  selected**. Excluded players/reviews/prices/histories are not future optional
+  tables in this metadata-only scope.
+
+Server code remains AGPL-3.0-only; data rights and private-component obligations
+remain separate, as do eventual deployed corresponding-source obligations.

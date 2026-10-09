@@ -2,17 +2,24 @@
 
 ## Status and scope
 
-**Agreed design; synthetic local implementation under issues #2–#5.**
-Authorization acquisition POST, publication inspection GET, complete snapshot
-PUT, anonymous public lookup GET, and generation-checked publication PUT now
-exist, backed by separate durable control/snapshot tables and synthetic local
-workerd tests. `/` and process-only `/health` are preserved.
+**Agreed design; synthetic local implementation under parent #1 and issues
+#2–#6.** Authorization acquisition POST, publication inspection GET, complete
+snapshot PUT, anonymous public lookup GET, and generation-checked publication
+PUT exist, backed by separate durable control/snapshot tables. `/` and
+process-only `/health` are preserved; health is not storage/crawler readiness.
+Issue #6 adds composed HTTP lifecycle/recovery acceptance inside the existing
+local workerd fixture. All required local quality commands passed; see the
+[acceptance matrix](catalog-acceptance.md) for the recorded run, commands,
+actual test sections, and evidence limits.
 
 This contract records the HTTP, payload, and atomic-persistence decisions
-confirmed in the design interview. Issues #2–#5 authorize these operations,
-reviewed migrations, local configuration, and synthetic local verification, not
-real collection, cloud provisioning, or deployment. Runtime evidence and
-source-rights/retention gates remain distinct from the normative requirements.
+confirmed in the design interview. The
+[fixed normative revision](https://github.com/Quick-Release/gq-games-api/blob/0a560ab47e331b478e2cadc440567dc413459e4b/docs/steam-catalog-contract.md)
+remains authoritative; status/evidence updates do not relax its requirements.
+Parent #1 scopes reviewed migrations, local configuration, and synthetic local
+implementation/verification, not real collection, private producer integration,
+cloud provisioning, or deployment. Runtime evidence and source-rights/retention
+gates remain distinct from the normative requirements.
 
 The initial consumer task is lookup by Steam App ID. Admit verified Game, Demo,
 and DLC applications; no canonical Game identities, editorial editions, search,
@@ -404,16 +411,15 @@ No Sessions integration or replica optimization is selected here.
 SQLite documents [UPSERT](https://www.sqlite.org/lang_upsert.html) and
 [RETURNING](https://www.sqlite.org/lang_returning.html); conditional upserts may
 return no rows, and DML returning is not a PostgreSQL-style writable CTE.
-Authorization acquisition's guarded initialization, captured outcome decoding,
-rollback, and concurrent behavior now have synthetic local workerd coverage.
-Snapshot decisions now also have synthetic workerd evidence for whole
-replacement, equality/ordering, generation fences, captured concurrent outcomes,
-and rollback. Administrative transitions now have synthetic local workerd
-coverage for expectation checks, same-state preservation, atomic deletion and
-advancement, reinstatement fences, coordinated commit-order races, and rollback.
-Their outcomes are captured inside one ordered batch, not via a later read.
-Preserve Alchemy migration ownership; no second migration executor, schema push,
-or provisioning is authorized.
+Authorization acquisition, snapshot decisions, and administrative transitions
+have synthetic local workerd acceptance sections for guarded mutation, captured
+outcome decoding, whole replacement, equality/ordering, generation/floor fences,
+coordinated commit-order races, and rollback. Outcomes are captured inside one
+ordered batch, not via a later read. Composed real HTTP flows also delay actual
+batch/read results through competing commits and test read-start withdrawal
+visibility. See [the acceptance map](catalog-acceptance.md); test presence is
+not a final passing-run claim. Preserve Alchemy migration ownership; no second
+migration executor, schema push, or provisioning is authorized.
 
 ## Required synthetic acceptance tests
 
@@ -471,17 +477,28 @@ mocks alone cannot establish D1 concurrency, transaction, or binding behavior.
 
 ### Still gated
 
-Acquisition, inspection, complete snapshot submission, anonymous lookup, and
-publication changes have HTTP/workerd coverage. Lookup eligibility is verified
-with synthetic control/snapshot fixture states using one primary joined read.
-Withdrawal/reinstatement tests audit complete deletion/minimal control and
-coordinate competing service operations, including both commit orders against
-acquisition/ingestion and stale administrative commands. A later SQL failure
-proves control and deletion roll back together. Synthetic local workerd cannot
-validate production routing, global latency, outages, replica behavior, or
-revocation of consumer-held copies. Before real publication, approve actual
-source field and retention policies, production abuse/rate limits and access
-budgets, credentials and rotation procedures, operational monitoring/recovery,
-and deployment. The private `gq-crawl` producer must agree to and implement
-acquire-before-collect, clock synchronization, source approval, and retry
-behavior; no private adapter or collection is authorized by this document.
+The [acceptance matrix](catalog-acceptance.md) maps all parent HTTP/D1
+categories to Node and local workerd test sections and records the completed
+issue #6 local quality run. Lifecycle observations are genuinely constructed
+after acquisition and stamped using the actual local clock, waiting for a later
+second rather than manufacturing `floor + 1`. Discarded snapshot responses are
+retried with unchanged body/event/generation, first as `unchanged`, then as
+`ignored_stale` after a newer accepted observation. Discarded admin responses
+are reconciled by GET; reinstatement needs fresh recollection, not relabeling.
+
+Fixture-only gates coordinate real HTTP batches/primary reads before execution
+and hold actual results through competing commits, retaining only ephemeral
+latched coordination signals and counters, not payloads or results. The
+read-start boundary includes an earlier read allowed to return 200 after
+withdrawal and a later read returning 404. A later-statement HTTP snapshot
+failure supplements service/control/withdrawal rollback checks and restart
+without migration replay. No production fault/gate endpoint or payload-bearing
+history/audit service is introduced. Node mocks do not establish Cloudflare
+binding/atomicity behavior; synthetic local workerd cannot validate production
+routing, global latency, outages, replica behavior, or revocation of
+consumer-held copies. Before real publication, approve actual source field and
+retention policies, production abuse/rate limits and access budgets, credentials
+and rotation procedures, operational monitoring/recovery, and deployment. The
+private `gq-crawl` producer must agree to and implement acquire-before-collect,
+clock synchronization, source approval, and retry behavior; no private adapter
+or collection is authorized by this document.

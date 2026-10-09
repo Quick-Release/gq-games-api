@@ -80,7 +80,7 @@ const databaseFailure = (cause: unknown) => {
     code: temporary ? 'SERVICE_UNAVAILABLE' : 'INTERNAL_SERVER_ERROR',
   });
 };
-const lookupQueryFailure = (failure: EffectDrizzleQueryError) => {
+const queryFailure = (failure: EffectDrizzleQueryError) => {
   // Drizzle wraps the SQL failure in an Effect Cause, not a bare SqlError.
   const error = Cause.isCause(failure.cause)
     ? Cause.findErrorOption(failure.cause)
@@ -130,7 +130,7 @@ const makeCatalog = Effect.gen(function* () {
           eq(publicationControl.state, 'eligible'),
         ),
       )
-      .pipe(Effect.mapError(lookupQueryFailure));
+      .pipe(Effect.mapError(queryFailure));
     const row = rows[0];
     if (!row) {
       return yield* Effect.fail(new CatalogFailure({ code: 'NOT_FOUND' }));
@@ -197,9 +197,7 @@ const makeCatalog = Effect.gen(function* () {
               from steam_application_publication where steam_app_id = ${steamAppId}`,
         ])
         .pipe(
-          Effect.mapError(
-            () => new CatalogFailure({ code: 'SERVICE_UNAVAILABLE' }),
-          ),
+          Effect.mapError((failure) => databaseFailure(failure.reason.cause)),
         );
 
       const row = yield* Schema.decodeUnknownEffect(authorizationRow)(
@@ -229,11 +227,7 @@ const makeCatalog = Effect.gen(function* () {
       .select()
       .from(publicationControl)
       .where(eq(publicationControl.steamAppId, steamAppId))
-      .pipe(
-        Effect.mapError(
-          () => new CatalogFailure({ code: 'SERVICE_UNAVAILABLE' }),
-        ),
-      );
+      .pipe(Effect.mapError(queryFailure));
     const row = rows[0];
     return {
       steam_app_id: steamAppId,
@@ -454,9 +448,7 @@ const makeCatalog = Effect.gen(function* () {
             where excluded.observed_at > steam_application_snapshot.observed_at`,
       ])
       .pipe(
-        Effect.mapError(
-          () => new CatalogFailure({ code: 'SERVICE_UNAVAILABLE' }),
-        ),
+        Effect.mapError((failure) => databaseFailure(failure.reason.cause)),
       );
 
     const row = yield* Schema.decodeUnknownEffect(snapshotDecisionRow)(

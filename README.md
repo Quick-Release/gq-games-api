@@ -6,7 +6,10 @@ Effect, Hono, Drizzle, and Vite+**.
 **Status: research + synthetic catalog lookup/ingestion/publication control.**
 The repository implements process health, anonymous last-known snapshot lookup,
 complete snapshot submission, publication authorization acquisition, and admin
-inspection/withdrawal/reinstatement on local D1. No cloud resources have been
+inspection/withdrawal/reinstatement on local D1. Issue #6 adds composed HTTP
+lifecycle/recovery acceptance, verified in isolated local workerd. See the
+[acceptance matrix](docs/catalog-acceptance.md) for reproducible test sections,
+completed quality commands, and evidence limits. No cloud resources have been
 provisioned or service deployed. `gq-crawl` integration and real-source approval
 remain out of scope.
 
@@ -66,7 +69,15 @@ identical content unchanged, or rejects equal-time conflicts. Explicit nulls
 clear old fields; no-op/rejection preserves the accepted event. Submission never
 initializes or changes publication control. No real upstream content,
 publication reason, raw body, or delivery history is stored. See
-[the contract](docs/steam-catalog-contract.md) for response shapes.
+[the contract](docs/steam-catalog-contract.md) for response shapes. Successful
+writes respond only after commit. After transport/server uncertainty, retry the
+same snapshot, event ID, and generation: a lost successful response can yield
+`unchanged`, then `ignored_stale` after a newer accepted observation. These are
+safe synchronous outcomes, not replay-ledger or exactly-once guarantees. Acquire
+before collection and stamp genuine UTC Unix-second observations using
+synchronized clocks. The generation's second-precision floor is a guardrail, not
+proof of collection order; never fabricate a newer timestamp or relabel an old
+queued payload with a new generation.
 
 Admin publication PUT requires exactly `state` (`eligible` or `withdrawn`) and
 `expected_generation` (the inspected generation, or null for absent control).
@@ -91,11 +102,16 @@ that requires both eligible control and an existing snapshot. Missing and
 withdrawn applications have identical `NOT_FOUND` 404s. All catalog responses,
 including failures, are no-store with server-owned request IDs. Lookup never
 fetches upstream content or promises current availability/freshness. No-store
-does not recall previously read responses or consumer-held copies. Synthetic
-workerd tests verify withdrawal/reinstatement, coordinated commit-order races,
-and rollback; they do not prove production routing or real-source rights.
+does not recall previously read responses or consumer-held copies. A lookup
+whose primary read starts after withdrawal commits cannot serve metadata; an
+earlier read may still finish afterward. Synthetic workerd acceptance covers
+withdrawal/reinstatement, gated real HTTP commit-order races, delayed captured
+outcomes, uncertain-response recovery, rollback, and restart. The acceptance
+matrix records the completed local run; this does not prove production routing
+or real-source rights.
 
-Private routes require HTTPS and distinct opaque Worker secrets
+All five catalog routes require HTTPS outside explicit local tests. Private
+routes additionally require distinct opaque Worker secrets
 `INGESTION_BEARER_TOKEN` / `PUBLICATION_ADMIN_BEARER_TOKEN`; missing or
 ambiguous configuration fails closed with 503. Alchemy resolves these via
 redacted Config bindings into Worker secrets. Local Worker state stays in memory

@@ -65,18 +65,18 @@ parameters, not string concatenation or `sql.raw` with untrusted input.
 The driver reports SQL failures through `EffectDrizzleQueryError`; service code
 should map expected failures deliberately. Do not serialize SQL, parameters, or
 underlying errors into HTTP responses. The Hono error boundary returns a generic
-JSON 500 and never logs raw exceptions. Acquisition/submission/inspection SQL
-failures become a safe `SERVICE_UNAVAILABLE` code, without driver details.
-Lookup and publication changes recognize documented transient D1 errors as
-`SERVICE_UNAVAILABLE`; unknown/permanent query errors become
-`INTERNAL_SERVER_ERROR`, without retaining or logging driver text. Missing HTTP
-database bindings return 503. The pinned client wraps all D1 failures as
-UnknownError, so this narrow classification uses
+JSON 500 and never logs raw exceptions. All five catalog operations recognize
+documented transient D1 errors as `SERVICE_UNAVAILABLE`; unknown/permanent query
+errors become `INTERNAL_SERVER_ERROR`, without retaining or logging driver text.
+Missing HTTP database bindings return 503. The pinned client wraps all D1
+failures as UnknownError, so this narrow classification uses
 [documented D1 messages](https://developers.cloudflare.com/d1/observability/debug-d1/#list-of-d1_errors),
-not an assumed typed driver distinction. Node tests check the wrapping/mapping,
-not real outage behavior. D1 transactions and streaming queries are not
-supported by this client; do not assume SQLite's transaction API is available.
-Assess D1's atomic batch capabilities when adding multi-statement operations.
+not an assumed typed driver distinction. `tests/catalog-database-errors.test.ts`
+checks the wrapping/mapping across all five routes in Node, not real outage
+behavior. Interactive transactions and streaming queries are not supported by
+this client; do not assume SQLite's transaction API is available. The operations
+below use the native ordered atomic D1 batch, not interactive transactions or
+parallel Effects.
 
 ### Atomic authorization acquisition
 
@@ -146,8 +146,11 @@ interleave with the snapshot read. Orphan metadata, absent snapshots, eligible
 control without metadata, and withdrawn control all produce `NOT_FOUND`. No
 Sessions, replicas, cache, TTL, inferred release state, or upstream fetch is
 introduced. The observation is last-known, not a freshness guarantee. Previously
-read/in-flight responses and consumer-held copies cannot be recalled. Synthetic
-withdrawal tests establish post-commit deletion; this is not consumer recall.
+read/in-flight responses and consumer-held copies cannot be recalled. A primary
+read begun after withdrawal commits cannot serve the snapshot. The composed HTTP
+fixture holds an actual earlier read result until after withdrawal (allowed 200)
+and executes a second read only after withdrawal (404); this is a read-start
+boundary, not consumer recall or production replication evidence.
 
 `/health` still reports process health only and never queries D1.
 
@@ -190,6 +193,11 @@ schemas, migrations, seeds, or fixtures.
 
 ## Validation
 
+The [acceptance matrix](catalog-acceptance.md) maps every parent HTTP/D1
+category to test files and searchable sections and records the completed local
+quality run for issue #6. Node and workerd evidence remain distinct from
+production guarantees.
+
 - `pnpm test`: Node unit tests cover lazy layer construction, parameterized SQL,
   and typed error handling with a deliberately failing D1 stub. They do **not**
   validate Cloudflare bindings.
@@ -209,9 +217,26 @@ schemas, migrations, seeds, or fixtures.
   reinstatement/fresh-publication fences, late-SQL rollback, and coordinated
   admin/acquisition/ingestion commit-order scenarios. A narrow persisted-state
   audit verifies deletion and minimal control, without relying on public lookup.
-  All state, storage, migration copies, logs, and home/config directories are
-  temporary and cleaned up; no Cloudflare credentials or second migration
-  executor are involved.
+  `verifyHttpLifecycle` in `tests/integration/catalog-lifecycle.ts`, invoked
+  inside `catalog.test.ts`, adds real HTTP acquire/collect/submit/lookup,
+  discarded-response same-body/event/generation retries (`unchanged`, then
+  `ignored_stale` after a newer observation), admin GET reconciliation, and
+  withdrawal/reinstatement with genuine recollection. Observations use the
+  actual local clock after acquisition, waiting for a later second instead of
+  inventing floor-relative timestamps. Invalid below-floor candidates are only
+  rejection tests, never accepted recollection evidence.
+  `tests/fixtures/http-gates.ts` coordinates actual D1 batches/primary reads
+  before execution and delays their results through competing commits. Only
+  ephemeral latched signals and counters live in its registry, not payloads,
+  SQL, or results. These HTTP gates supplement existing service races: captured
+  classifications are asserted independently of later reads. A fixture-only
+  later-statement HTTP snapshot failure checks rollback and sanitized failure
+  handling, alongside control initialization, snapshot insert/replacement, and
+  withdrawal deletion/advancement rollback. No production fault endpoint is
+  added. All state, storage, migration copies, logs, and home/config directories
+  are temporary and cleaned up; no Cloudflare credentials or second migration
+  executor are involved. Restart also checks the composed lifecycle's control,
+  snapshot, and public representation without reseeding.
 - Local workerd evidence is not production routing, replica, latency, outage,
   real-source rights, or deployment evidence. Source-field rights and express
   durable-control retention permission remain gates before real publication.
