@@ -40,6 +40,23 @@ const snapshotOutcome = Schema.Struct({
 const snapshotFailure = Schema.Struct({
   error: Schema.Struct({ code: Schema.String }),
 });
+const publicationOutcome = Schema.Struct({
+  steam_app_id: Schema.Number,
+  state: Schema.Literals(['eligible', 'withdrawn']),
+  generation: Schema.String,
+  generation_issued_at: Schema.Number,
+  outcome: Schema.Literals(['applied', 'unchanged']),
+});
+const publicationRace = Schema.Struct({
+  arrivals: Schema.Number,
+  withdrawal: Schema.Union([publicationOutcome, snapshotFailure]),
+  other: Schema.Union([
+    publicationOutcome,
+    authorization,
+    snapshotOutcome,
+    snapshotFailure,
+  ]),
+});
 const snapshotRace = Schema.Struct({
   arrivals: Schema.Number,
   results: Schema.Array(Schema.Union([snapshotOutcome, snapshotFailure])),
@@ -126,7 +143,7 @@ const availablePort = async () => {
   return address.port;
 };
 
-it('persists generation-fenced snapshots, serves only eligible last-known applications, and rolls back native D1 batches across workerd restarts', async () => {
+it('persists generation-fenced snapshots and publication changes, serves only eligible applications, and rolls back native D1 batches across workerd restarts', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'gq-catalog-d1-'));
   const migrations = join(directory, 'migrations');
   const home = join(directory, 'home');
@@ -236,6 +253,44 @@ it('persists generation-fenced snapshots, serves only eligible last-known applic
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ generation, snapshot }),
     });
+  const change = async (
+    id: number,
+    input: unknown,
+    millis = 1_700_000_020_999,
+    operation = 'change',
+  ) =>
+    json(`/fixture/${operation}/${id}?millis=${millis}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    });
+  const changed = async (
+    id: number,
+    state: 'eligible' | 'withdrawn',
+    expectedGeneration: string | null,
+    millis = 1_700_000_020_999,
+  ) =>
+    Schema.decodeUnknownSync(
+      publicationOutcome,
+      strict,
+    )(
+      await change(
+        id,
+        { state, expected_generation: expectedGeneration },
+        millis,
+      ),
+    );
+  const publicationRaceRequest = async (id: number, input: unknown) =>
+    Schema.decodeUnknownSync(
+      publicationRace,
+      strict,
+    )(
+      await json(`/fixture/publication-contenders/${id}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(input),
+      }),
+    );
   const applied = (id: number, observedAt: number) => ({
     steam_app_id: id,
     outcome: 'applied',
@@ -1543,6 +1598,487 @@ it('persists generation-fenced snapshots, serves only eligible last-known applic
       });
       expect(await auditSnapshot(4101)).toEqual(afterUncertain);
 
+      // Issue #5: service acceptance through the SAME workerd/D1 run. Persisted
+      // audits below are narrowly for deletion/retention, never public lookup.
+      const mismatch = { error: { code: 'PUBLICATION_GENERATION_MISMATCH' } };
+      const deniedPublication = { error: { code: 'PUBLICATION_WITHDRAWN' } };
+      const publicationGenerations = new Set<string>();
+      for (const [id, state] of [
+        [7001, 'eligible'],
+        [7002, 'withdrawn'],
+      ] as const) {
+        expect(await inspect(id)).toEqual({
+          steam_app_id: id,
+          state: 'uninitialized',
+          generation: null,
+          generation_issued_at: null,
+        });
+        expect(
+          await change(id, { state, expected_generation: 'synthetic-absent' }),
+        ).toEqual(mismatch);
+        expect((await inspect(id)).state).toBe('uninitialized');
+        const initialized = await changed(id, state, null);
+        expect(initialized).toEqual({
+          steam_app_id: id,
+          state,
+          generation: expect.any(String),
+          generation_issued_at: 1_700_000_020,
+          outcome: 'applied',
+        });
+        expect(initialized.generation.length).toBeGreaterThan(0);
+        expect(publicationGenerations.has(initialized.generation)).toBe(false);
+        publicationGenerations.add(initialized.generation);
+        const { outcome: _outcome, ...stored } = initialized;
+        expect(await inspect(id)).toEqual(stored);
+        expect(
+          await changed(id, state, initialized.generation, 1_900_000_000_999),
+        ).toEqual({
+          ...initialized,
+          outcome: 'unchanged',
+        });
+        for (const target of ['eligible', 'withdrawn']) {
+          for (const expectedGeneration of [null, 'synthetic-stale']) {
+            expect(
+              await change(id, {
+                state: target,
+                expected_generation: expectedGeneration,
+              }),
+            ).toEqual(mismatch);
+            expect(await inspect(id)).toEqual(stored);
+            expect(await auditSnapshot(id)).toBeNull();
+          }
+        }
+        if (state === 'withdrawn') {
+          expect(await json(`/fixture/acquire/${id}`)).toEqual(
+            deniedPublication,
+          );
+          expect(
+            await submit(
+              id,
+              initialized.generation,
+              syntheticSnapshot(1_700_000_100),
+            ),
+          ).toEqual(deniedPublication);
+        } else {
+          expect(await acquire(id, 1_900_000_000_999)).toEqual({
+            steam_app_id: id,
+            generation: initialized.generation,
+            minimum_observed_at: 1_700_000_020,
+          });
+        }
+        expect(await inspect(id)).toEqual(stored);
+      }
+
+      const populatedId = 7003;
+      const oldPermit = await acquire(populatedId);
+      expect(
+        await submit(populatedId, oldPermit.generation, syntheticSnapshot()),
+      ).toEqual(applied(populatedId, 1_700_000_010));
+      const populatedRow = { ...initialSnapshotRow, steamAppId: populatedId };
+      const populatedControl = await inspect(populatedId);
+      expect(await auditSnapshot(populatedId)).toEqual(populatedRow);
+      expect(
+        await changed(
+          populatedId,
+          'eligible',
+          oldPermit.generation,
+          1_900_000_000_999,
+        ),
+      ).toEqual({
+        ...populatedControl,
+        outcome: 'unchanged',
+      });
+      for (const target of ['eligible', 'withdrawn']) {
+        for (const expectedGeneration of [null, 'synthetic-stale']) {
+          expect(
+            await change(populatedId, {
+              state: target,
+              expected_generation: expectedGeneration,
+            }),
+          ).toEqual(mismatch);
+          expect(await inspect(populatedId)).toEqual(populatedControl);
+          expect(await auditSnapshot(populatedId)).toEqual(populatedRow);
+        }
+      }
+      // Strict service payloads also fail before changing accepted control or
+      // any accepted event/provenance. No unsafe arbitrary reason is retained.
+      for (const invalid of [
+        null,
+        [],
+        'withdrawn',
+        {},
+        { state: 'withdrawn' },
+        { expected_generation: oldPermit.generation },
+        { state: 'uninitialized', expected_generation: oldPermit.generation },
+        { state: 'withdrawn', expected_generation: 1 },
+        { state: 'withdrawn', expected_generation: '' },
+        { state: 'withdrawn', expected_generation: ' synthetic ' },
+        {
+          state: 'withdrawn',
+          expected_generation: oldPermit.generation,
+          reason: 'Synthetic private reason',
+        },
+      ]) {
+        expect(await change(populatedId, invalid)).toEqual({
+          error: { code: 'VALIDATION_FAILED' },
+        });
+        expect(await inspect(populatedId)).toEqual(populatedControl);
+        expect(await auditSnapshot(populatedId)).toEqual(populatedRow);
+      }
+      // Deliberately inconsistent fixed seed: a same-state withdrawn command is
+      // mutation-free too, not an unconditional purge disguised as a no-op.
+      const orphanedRow = await auditSnapshot(6002);
+      const orphanedControl = await inspect(6002);
+      expect(
+        await changed(6002, 'withdrawn', orphanedControl.generation),
+      ).toEqual({
+        ...orphanedControl,
+        outcome: 'unchanged',
+      });
+      expect(
+        await change(6002, { state: 'withdrawn', expected_generation: null }),
+      ).toEqual(mismatch);
+      expect(await inspect(6002)).toEqual(orphanedControl);
+      expect(await auditSnapshot(6002)).toEqual(orphanedRow);
+
+      const removed = await changed(
+        populatedId,
+        'withdrawn',
+        oldPermit.generation,
+      );
+      expect(removed).toEqual({
+        steam_app_id: populatedId,
+        state: 'withdrawn',
+        generation: expect.any(String),
+        generation_issued_at: 1_700_000_020,
+        outcome: 'applied',
+      });
+      expect(removed.generation).not.toBe(oldPermit.generation);
+      expect(await auditSnapshot(populatedId)).toBeNull();
+      expect(
+        await changed(
+          populatedId,
+          'withdrawn',
+          removed.generation,
+          1_900_000_000_999,
+        ),
+      ).toEqual({ ...removed, outcome: 'unchanged' });
+      expect(await json(`/fixture/acquire/${populatedId}`)).toEqual(
+        deniedPublication,
+      );
+      expect(
+        await submit(
+          populatedId,
+          oldPermit.generation,
+          syntheticSnapshot(1_700_000_100),
+        ),
+      ).toEqual(deniedPublication);
+      expect(
+        await change(populatedId, {
+          state: 'eligible',
+          expected_generation: oldPermit.generation,
+        }),
+      ).toEqual(mismatch);
+      const reinstated = await changed(
+        populatedId,
+        'eligible',
+        removed.generation,
+        1_700_000_030_999,
+      );
+      expect(reinstated).toEqual({
+        steam_app_id: populatedId,
+        state: 'eligible',
+        generation: expect.any(String),
+        generation_issued_at: 1_700_000_030,
+        outcome: 'applied',
+      });
+      expect(
+        new Set([
+          oldPermit.generation,
+          removed.generation,
+          reinstated.generation,
+        ]).size,
+      ).toBe(3);
+      expect(await auditSnapshot(populatedId)).toBeNull();
+      expect(await acquire(populatedId, 1_900_000_000_999)).toEqual({
+        steam_app_id: populatedId,
+        generation: reinstated.generation,
+        minimum_observed_at: 1_700_000_030,
+      });
+      for (const generation of [oldPermit.generation, removed.generation]) {
+        expect(
+          await submit(
+            populatedId,
+            generation,
+            syntheticSnapshot(1_700_000_100),
+          ),
+        ).toEqual(mismatch);
+        expect(await auditSnapshot(populatedId)).toBeNull();
+      }
+      expect(
+        await submit(
+          populatedId,
+          reinstated.generation,
+          syntheticSnapshot(1_700_000_029),
+        ),
+      ).toEqual({ error: { code: 'VALIDATION_FAILED' } });
+      expect(await auditSnapshot(populatedId)).toBeNull();
+      const { outcome: _reinstatedOutcome, ...reinstatedControl } = reinstated;
+      expect(await inspect(populatedId)).toEqual(reinstatedControl);
+      expect(
+        await submit(
+          populatedId,
+          reinstated.generation,
+          syntheticSnapshot(
+            1_700_000_030,
+            'synthetic-fresh-after-reinstatement',
+          ),
+        ),
+      ).toEqual(applied(populatedId, 1_700_000_030));
+      const freshRow = {
+        ...populatedRow,
+        eventId: 'synthetic-fresh-after-reinstatement',
+        observedAt: 1_700_000_030,
+      };
+      expect(await auditSnapshot(populatedId)).toEqual(freshRow);
+      expect(
+        await submit(
+          populatedId,
+          reinstated.generation,
+          syntheticSnapshot(1_700_000_029),
+        ),
+      ).toEqual({
+        error: { code: 'VALIDATION_FAILED' },
+      });
+      expect(await auditSnapshot(populatedId)).toEqual(freshRow);
+      expect(await inspect(populatedId)).toEqual(reinstatedControl);
+      // Queued old generation remains denied even after new metadata exists.
+      expect(
+        await submit(
+          populatedId,
+          oldPermit.generation,
+          syntheticSnapshot(1_700_000_100),
+        ),
+      ).toEqual(mismatch);
+      expect(
+        await change(populatedId, {
+          state: 'withdrawn',
+          expected_generation: removed.generation,
+        }),
+      ).toEqual(mismatch);
+      expect(await auditSnapshot(populatedId)).toEqual(freshRow);
+      expect(await inspect(populatedId)).toEqual(reinstatedControl);
+
+      // Late REAL SQL fault: existing control advancement AND snapshot deletion
+      // must roll back; absent initialization must not leave a control either.
+      const rollbackAdminPermit = await acquire(7004);
+      expect(
+        await submit(7004, rollbackAdminPermit.generation, syntheticSnapshot()),
+      ).toEqual(applied(7004, 1_700_000_010));
+      const rollbackAdminControl = await inspect(7004);
+      const rollbackAdminRow = { ...initialSnapshotRow, steamAppId: 7004 };
+      expect(
+        await change(
+          7004,
+          {
+            state: 'withdrawn',
+            expected_generation: rollbackAdminPermit.generation,
+          },
+          1_700_000_020_999,
+          'change-fail',
+        ),
+      ).toEqual({ error: { code: 'INTERNAL_SERVER_ERROR' } });
+      expect(await inspect(7004)).toEqual(rollbackAdminControl);
+      expect(await auditSnapshot(7004)).toEqual(rollbackAdminRow);
+      for (const state of ['eligible', 'withdrawn']) {
+        expect(
+          await change(
+            7005,
+            { state, expected_generation: null },
+            1_700_000_020_999,
+            'change-fail',
+          ),
+        ).toEqual({ error: { code: 'INTERNAL_SERVER_ERROR' } });
+        expect((await inspect(7005)).state).toBe('uninitialized');
+        expect(await auditSnapshot(7005)).toBeNull();
+      }
+
+      // Both invocations arrive at D1 before either executes; the fixture releases
+      // commit order explicitly and delays results until both commits complete.
+      for (const withdrawalFirst of [false, true]) {
+        for (const other of ['acquire', 'submit', 'change'] as const) {
+          const id =
+            7100 +
+            (withdrawalFirst ? 10 : 0) +
+            ['acquire', 'submit', 'change'].indexOf(other);
+          const permit = await acquire(id);
+          const snapshot = syntheticSnapshot(
+            1_700_000_010,
+            'synthetic-raced-submission',
+          );
+          const competition = await publicationRaceRequest(id, {
+            other,
+            withdrawal_first: withdrawalFirst,
+            expected_generation: permit.generation,
+            snapshot,
+            other_change: {
+              state: 'withdrawn',
+              expected_generation: permit.generation,
+            },
+          });
+          expect(competition.arrivals).toBe(2);
+          const winner = Schema.decodeUnknownSync(
+            publicationOutcome,
+            strict,
+          )(
+            other === 'change' && !withdrawalFirst
+              ? competition.other
+              : competition.withdrawal,
+          );
+          expect(winner).toEqual({
+            steam_app_id: id,
+            state: 'withdrawn',
+            generation: expect.any(String),
+            generation_issued_at:
+              other === 'change' && !withdrawalFirst
+                ? 1_700_000_010
+                : 1_700_000_020,
+            outcome: 'applied',
+          });
+          expect(winner.generation).not.toBe(permit.generation);
+          if (other === 'change') {
+            expect(
+              withdrawalFirst ? competition.other : competition.withdrawal,
+            ).toEqual(mismatch);
+          } else {
+            expect(competition.other).toEqual(
+              withdrawalFirst
+                ? deniedPublication
+                : other === 'acquire'
+                  ? permit
+                  : applied(id, 1_700_000_010),
+            );
+          }
+          const { outcome: _winnerOutcome, ...winningControl } = winner;
+          expect(await inspect(id)).toEqual(winningControl);
+          expect(await auditSnapshot(id)).toBeNull();
+          expect(await json(`/fixture/acquire/${id}`)).toEqual(
+            deniedPublication,
+          );
+          expect(
+            await submit(
+              id,
+              permit.generation,
+              syntheticSnapshot(1_700_000_100),
+            ),
+          ).toEqual(deniedPublication);
+          // A stale competing command cannot reinstate the winner's withdrawal.
+          expect(
+            await change(id, {
+              state: 'eligible',
+              expected_generation: permit.generation,
+            }),
+          ).toEqual(mismatch);
+          expect(await inspect(id)).toEqual(winningControl);
+        }
+        // Same-state admin racing withdrawal: unchanged must capture the earlier
+        // eligible generation even when its response arrives after withdrawal.
+        const id = withdrawalFirst ? 7113 : 7103;
+        const permit = await acquire(id);
+        expect(
+          await submit(id, permit.generation, syntheticSnapshot()),
+        ).toEqual(applied(id, 1_700_000_010));
+        const competition = await publicationRaceRequest(id, {
+          other: 'change',
+          withdrawal_first: withdrawalFirst,
+          expected_generation: permit.generation,
+          other_change: {
+            state: 'eligible',
+            expected_generation: permit.generation,
+          },
+        });
+        expect(competition.arrivals).toBe(2);
+        expect(competition.other).toEqual(
+          withdrawalFirst
+            ? mismatch
+            : {
+                steam_app_id: id,
+                state: 'eligible',
+                generation: permit.generation,
+                generation_issued_at: 1_700_000_000,
+                outcome: 'unchanged',
+              },
+        );
+        const winner = Schema.decodeUnknownSync(
+          publicationOutcome,
+          strict,
+        )(competition.withdrawal);
+        expect(winner).toEqual({
+          steam_app_id: id,
+          state: 'withdrawn',
+          generation: expect.any(String),
+          generation_issued_at: 1_700_000_020,
+          outcome: 'applied',
+        });
+        expect(await auditSnapshot(id)).toBeNull();
+        expect(await inspect(id)).toEqual({
+          steam_app_id: id,
+          state: 'withdrawn',
+          generation: winner.generation,
+          generation_issued_at: 1_700_000_020,
+        });
+      }
+
+      // Cold acquisition versus null-expectation withdrawal has a different
+      // legitimate outcome: an acquire that commits first invalidates null.
+      for (const withdrawalFirst of [false, true]) {
+        const id = withdrawalFirst ? 7121 : 7120;
+        const competition = await publicationRaceRequest(id, {
+          other: 'acquire',
+          withdrawal_first: withdrawalFirst,
+          expected_generation: null,
+        });
+        expect(competition.arrivals).toBe(2);
+        if (withdrawalFirst) {
+          const winner = Schema.decodeUnknownSync(
+            publicationOutcome,
+            strict,
+          )(competition.withdrawal);
+          expect(winner).toEqual({
+            steam_app_id: id,
+            state: 'withdrawn',
+            generation: expect.any(String),
+            generation_issued_at: 1_700_000_020,
+            outcome: 'applied',
+          });
+          expect(competition.other).toEqual(deniedPublication);
+          expect(await inspect(id)).toEqual({
+            steam_app_id: id,
+            state: 'withdrawn',
+            generation: winner.generation,
+            generation_issued_at: 1_700_000_020,
+          });
+        } else {
+          const winner = Schema.decodeUnknownSync(
+            authorization,
+            strict,
+          )(competition.other);
+          expect(winner).toEqual({
+            steam_app_id: id,
+            generation: expect.any(String),
+            minimum_observed_at: 1_700_000_010,
+          });
+          expect(competition.withdrawal).toEqual(mismatch);
+          expect(await inspect(id)).toEqual({
+            steam_app_id: id,
+            state: 'eligible',
+            generation: winner.generation,
+            generation_issued_at: 1_700_000_010,
+          });
+        }
+        expect(await auditSnapshot(id)).toBeNull();
+      }
+
       const prefix = '/internal/v1/steam/applications';
       const http = async (
         path: string,
@@ -1551,6 +2087,7 @@ it('persists generation-fenced snapshots, serves only eligible last-known applic
         snapshot?: unknown,
         generation?: string,
         encodedSnapshot?: string,
+        overrides: RequestInit = {},
       ) => {
         const response = await fetch(
           `${url}${path.startsWith('/fixture/') ? '' : prefix}${path}`,
@@ -1570,9 +2107,13 @@ it('persists generation-fenced snapshots, serves only eligible last-known applic
               ? {}
               : { body: encodedSnapshot ?? JSON.stringify(snapshot) }),
             signal: AbortSignal.timeout(10_000),
+            ...overrides,
           },
         );
         expect(response.headers.get('Cache-Control')).toBe('no-store');
+        expect(response.headers.get('Content-Type')).toContain(
+          'application/json',
+        );
         const requestId = response.headers.get('X-Request-ID');
         expect(requestId).toBeTruthy();
         expect(requestId).not.toBe('caller-id');
@@ -1581,6 +2122,21 @@ it('persists generation-fenced snapshots, serves only eligible last-known applic
           expect(
             text.includes(secret),
             'No credential in catalog HTTP response',
+          ).toBe(false);
+        }
+        for (const marker of [
+          'catalog_fixture_missing_table',
+          'D1_ERROR',
+          'no such table',
+          'SqlError',
+          'EffectDrizzleQueryError',
+          'Synthetic private reason',
+          'insert into steam_application_publication',
+          'delete from steam_application_snapshot',
+        ]) {
+          expect(
+            text.includes(marker),
+            'No SQL, causes, or submitted reasons in HTTP responses',
           ).toBe(false);
         }
         const body: unknown = JSON.parse(text);
@@ -2105,6 +2661,479 @@ it('persists generation-fenced snapshots, serves only eligible last-known applic
         generation_issued_at: null,
       });
 
+      // Production admin PUT -> Hono authentication/transport -> Effect -> D1.
+      // These tests are independent of whether public lookup is delivered.
+      const publicationHttp = async (id: number | string, input: unknown) =>
+        http(`/${id}/publication`, admin, 'PUT', input);
+      const safeHttpFailure = (
+        result: Awaited<ReturnType<typeof http>>,
+        status: number,
+        code: string,
+      ) => {
+        expect(result.status).toBe(status);
+        if (code === 'VALIDATION_FAILED') {
+          const failure = Schema.decodeUnknownSync(
+            Schema.Struct({
+              error: Schema.Struct({
+                code: Schema.Literal('VALIDATION_FAILED'),
+                request_id: Schema.String,
+                issues: Schema.optionalKey(
+                  Schema.Array(
+                    Schema.Struct({ path: Schema.String, code: Schema.String }),
+                  ),
+                ),
+              }),
+            }),
+            strict,
+          )(result.body);
+          expect(failure.error.request_id).toBe(result.requestId);
+          expect(failure.error.issues?.length ?? 0).toBeLessThanOrEqual(20);
+          for (const issue of failure.error.issues ?? []) {
+            expect(issue.path).toMatch(/^[a-z_.]*$/);
+            expect(issue.code).toMatch(/^[A-Z_]+$/);
+          }
+        } else {
+          expect(result.body).toEqual({
+            error: { code, request_id: result.requestId },
+          });
+        }
+      };
+      const httpChanged = (result: Awaited<ReturnType<typeof http>>) => {
+        expect(result.status).toBe(200);
+        return Schema.decodeUnknownSync(
+          Schema.Struct({ data: publicationOutcome }),
+          strict,
+        )(result.body).data;
+      };
+      const coldAdmin = await http('/7201/publication', admin);
+      expect(coldAdmin.status).toBe(200);
+      expect(coldAdmin.body).toEqual({
+        data: {
+          steam_app_id: 7201,
+          state: 'uninitialized',
+          generation: null,
+          generation_issued_at: null,
+        },
+      });
+      const issuedBefore = Math.floor(Date.now() / 1000);
+      const initializedHttp = httpChanged(
+        await publicationHttp(7201, {
+          state: 'eligible',
+          expected_generation: null,
+        }),
+      );
+      expect(initializedHttp).toEqual({
+        steam_app_id: 7201,
+        state: 'eligible',
+        generation: expect.any(String),
+        generation_issued_at: expect.any(Number),
+        outcome: 'applied',
+      });
+      expect(initializedHttp.generation.length).toBeGreaterThan(0);
+      expect(Number.isInteger(initializedHttp.generation_issued_at)).toBe(true);
+      expect(initializedHttp.generation_issued_at).toBeGreaterThanOrEqual(
+        issuedBefore,
+      );
+      expect(initializedHttp.generation_issued_at).toBeLessThanOrEqual(
+        Math.floor(Date.now() / 1000),
+      );
+      expect(await auditSnapshot(7201)).toBeNull();
+      const adminHttpSnapshot = syntheticSnapshot(
+        initializedHttp.generation_issued_at,
+        'synthetic-admin-http-accepted',
+      );
+      const acceptedHttp = await http(
+        '/7201/snapshot',
+        ingestion,
+        'PUT',
+        adminHttpSnapshot,
+        initializedHttp.generation,
+      );
+      expect(acceptedHttp.status).toBe(200);
+      expect(acceptedHttp.body).toEqual({
+        data: applied(7201, initializedHttp.generation_issued_at),
+      });
+      const adminHttpRow = {
+        ...initialSnapshotRow,
+        steamAppId: 7201,
+        eventId: 'synthetic-admin-http-accepted',
+        observedAt: initializedHttp.generation_issued_at,
+      };
+      expect(await auditSnapshot(7201)).toEqual(adminHttpRow);
+      const { outcome: _httpOutcome, ...adminHttpControl } = initializedHttp;
+      expect(
+        httpChanged(
+          await publicationHttp(7201, {
+            state: 'eligible',
+            expected_generation: initializedHttp.generation,
+          }),
+        ),
+      ).toEqual({ ...initializedHttp, outcome: 'unchanged' });
+      for (const state of ['eligible', 'withdrawn']) {
+        for (const expectedGeneration of [null, 'synthetic-stale-admin-http']) {
+          safeHttpFailure(
+            await publicationHttp(7201, {
+              state,
+              expected_generation: expectedGeneration,
+            }),
+            409,
+            'PUBLICATION_GENERATION_MISMATCH',
+          );
+          expect(await inspect(7201)).toEqual(adminHttpControl);
+          expect(await auditSnapshot(7201)).toEqual(adminHttpRow);
+        }
+      }
+      for (const input of [
+        null,
+        [],
+        1,
+        'withdrawn',
+        {},
+        { state: 'withdrawn' },
+        { expected_generation: initializedHttp.generation },
+        {
+          state: 'uninitialized',
+          expected_generation: initializedHttp.generation,
+        },
+        { state: 'Withdrawn', expected_generation: initializedHttp.generation },
+        { state: 'withdrawn', expected_generation: false },
+        { state: 'withdrawn', expected_generation: '' },
+        { state: 'withdrawn', expected_generation: ' synthetic ' },
+        {
+          state: 'withdrawn',
+          expected_generation: initializedHttp.generation,
+          reason: 'Synthetic private reason',
+        },
+        {
+          state: 'withdrawn',
+          expected_generation: initializedHttp.generation,
+          steam_app_id: 7201,
+        },
+      ]) {
+        safeHttpFailure(
+          await publicationHttp(7201, input),
+          422,
+          'VALIDATION_FAILED',
+        );
+        expect(await inspect(7201)).toEqual(adminHttpControl);
+        expect(await auditSnapshot(7201)).toEqual(adminHttpRow);
+      }
+      // A malformed JSON body makes auth-before-parsing externally observable.
+      for (const [token, status, code] of [
+        ['', 401, 'UNAUTHORIZED'],
+        ['synthetic-invalid-credential', 401, 'UNAUTHORIZED'],
+        [ingestion, 403, 'FORBIDDEN'],
+      ] as const) {
+        safeHttpFailure(
+          await http('/7201/publication', token, 'PUT', {}, undefined, '{'),
+          status,
+          code,
+        );
+      }
+      for (const [path, status, code] of [
+        ['/fixture/http-change-no-config', 503, 'SERVICE_UNAVAILABLE'],
+        ['/fixture/http-change-secure', 403, 'FORBIDDEN'],
+      ] as const) {
+        safeHttpFailure(
+          await http(path, admin, 'PUT', {}, undefined, '{'),
+          status,
+          code,
+        );
+        expect((await inspect(7204)).state).toBe('uninitialized');
+      }
+      safeHttpFailure(
+        await http('/7201/publication', admin, 'PUT', {}, undefined, '{'),
+        400,
+        'INVALID_JSON',
+      );
+      for (const headers of [
+        { 'Content-Type': 'text/plain' },
+        { 'Content-Type': 'application/json; charset=iso-8859-1' },
+        { 'Content-Type': 'application/json', 'Content-Encoding': 'gzip' },
+      ]) {
+        const requestHeaders = new Headers({
+          Authorization: `Bearer ${admin}`,
+        });
+        for (const [key, value] of Object.entries(headers)) {
+          if (value !== undefined) requestHeaders.set(key, value);
+        }
+        safeHttpFailure(
+          await http(
+            '/7201/publication',
+            admin,
+            'PUT',
+            {},
+            undefined,
+            undefined,
+            {
+              headers: requestHeaders,
+            },
+          ),
+          415,
+          'UNSUPPORTED_MEDIA_TYPE',
+        );
+      }
+      // Actual streamed HTTP bytes without Content-Length: the real Worker
+      // reader must stop at 32 KiB, rather than trust a declared body size.
+      const streamed = {
+        headers: {
+          Authorization: `Bearer ${admin}`,
+          'Content-Type': 'application/json',
+          'X-Request-ID': 'caller-id',
+        },
+        body: new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode(' '.repeat(32 * 1024)));
+            controller.enqueue(new TextEncoder().encode('{}'));
+            controller.close();
+          },
+        }),
+        duplex: 'half',
+      };
+      safeHttpFailure(
+        await http(
+          '/7201/publication',
+          admin,
+          'PUT',
+          {},
+          undefined,
+          undefined,
+          streamed,
+        ),
+        413,
+        'PAYLOAD_TOO_LARGE',
+      );
+      for (const id of [
+        '0',
+        '4294967296',
+        '01',
+        '-1',
+        '+1',
+        '1.0',
+        '1e3',
+        '0x10',
+        'NaN',
+        '%201',
+        '1%20',
+      ]) {
+        safeHttpFailure(
+          await publicationHttp(id, {
+            state: 'withdrawn',
+            expected_generation: null,
+          }),
+          400,
+          'INVALID_APP_ID',
+        );
+      }
+      expect(await inspect(7201)).toEqual(adminHttpControl);
+      expect(await auditSnapshot(7201)).toEqual(adminHttpRow);
+
+      // Simulate a lost success: deliberately discard the committed PUT result.
+      // Reconcile via admin GET, not by blindly replacing the old expectation.
+      const uncertainAdminCommand = {
+        state: 'withdrawn',
+        expected_generation: initializedHttp.generation,
+      };
+      await publicationHttp(7201, uncertainAdminCommand);
+      const reconciledHttp = await http('/7201/publication', admin);
+      expect(reconciledHttp.status).toBe(200);
+      const reconciled = Schema.decodeUnknownSync(
+        Schema.Struct({ data: control }),
+        strict,
+      )(reconciledHttp.body).data;
+      expect(reconciled).toEqual({
+        steam_app_id: 7201,
+        state: 'withdrawn',
+        generation: expect.any(String),
+        generation_issued_at: expect.any(Number),
+      });
+      expect(reconciled.generation).not.toBe(initializedHttp.generation);
+      expect(Number.isInteger(reconciled.generation_issued_at)).toBe(true);
+      expect(await auditSnapshot(7201)).toBeNull();
+      safeHttpFailure(
+        await publicationHttp(7201, uncertainAdminCommand),
+        409,
+        'PUBLICATION_GENERATION_MISMATCH',
+      );
+      expect(
+        httpChanged(
+          await publicationHttp(7201, {
+            state: 'withdrawn',
+            expected_generation: reconciled.generation,
+          }),
+        ),
+      ).toEqual({ ...reconciled, outcome: 'unchanged' });
+      safeHttpFailure(
+        await http('/7201/ingestion-authorization', ingestion, 'POST'),
+        409,
+        'PUBLICATION_WITHDRAWN',
+      );
+      safeHttpFailure(
+        await http(
+          '/7201/snapshot',
+          ingestion,
+          'PUT',
+          adminHttpSnapshot,
+          initializedHttp.generation,
+        ),
+        409,
+        'PUBLICATION_WITHDRAWN',
+      );
+      safeHttpFailure(
+        await publicationHttp(7201, {
+          state: 'eligible',
+          expected_generation: initializedHttp.generation,
+        }),
+        409,
+        'PUBLICATION_GENERATION_MISMATCH',
+      );
+      expect((await http('/7201/publication', admin)).body).toEqual({
+        data: reconciled,
+      });
+      const httpReinstated = httpChanged(
+        await publicationHttp(7201, {
+          state: 'eligible',
+          expected_generation: reconciled.generation,
+        }),
+      );
+      expect(httpReinstated).toEqual({
+        steam_app_id: 7201,
+        state: 'eligible',
+        generation: expect.any(String),
+        generation_issued_at: expect.any(Number),
+        outcome: 'applied',
+      });
+      expect(
+        new Set([
+          initializedHttp.generation,
+          reconciled.generation,
+          httpReinstated.generation,
+        ]).size,
+      ).toBe(3);
+      expect(await auditSnapshot(7201)).toBeNull();
+      const reacquiredHttp = await http(
+        '/7201/ingestion-authorization',
+        ingestion,
+        'POST',
+      );
+      expect(reacquiredHttp.status).toBe(200);
+      expect(reacquiredHttp.body).toEqual({
+        data: {
+          steam_app_id: 7201,
+          generation: httpReinstated.generation,
+          minimum_observed_at: httpReinstated.generation_issued_at,
+        },
+      });
+      safeHttpFailure(
+        await http(
+          '/7201/snapshot',
+          ingestion,
+          'PUT',
+          syntheticSnapshot(httpReinstated.generation_issued_at + 1),
+          initializedHttp.generation,
+        ),
+        409,
+        'PUBLICATION_GENERATION_MISMATCH',
+      );
+      safeHttpFailure(
+        await http(
+          '/7201/snapshot',
+          ingestion,
+          'PUT',
+          syntheticSnapshot(httpReinstated.generation_issued_at - 1),
+          httpReinstated.generation,
+        ),
+        422,
+        'VALIDATION_FAILED',
+      );
+      expect(await auditSnapshot(7201)).toBeNull();
+      const freshHttp = await http(
+        '/7201/snapshot',
+        ingestion,
+        'PUT',
+        syntheticSnapshot(
+          httpReinstated.generation_issued_at,
+          'synthetic-admin-http-fresh',
+        ),
+        httpReinstated.generation,
+      );
+      expect(freshHttp.status).toBe(200);
+      expect(freshHttp.body).toEqual({
+        data: applied(7201, httpReinstated.generation_issued_at),
+      });
+      expect(await auditSnapshot(7201)).toEqual({
+        ...adminHttpRow,
+        eventId: 'synthetic-admin-http-fresh',
+        observedAt: httpReinstated.generation_issued_at,
+      });
+      const absentWithdrawnHttp = httpChanged(
+        await publicationHttp(7202, {
+          state: 'withdrawn',
+          expected_generation: null,
+        }),
+      );
+      expect(absentWithdrawnHttp).toEqual({
+        steam_app_id: 7202,
+        state: 'withdrawn',
+        generation: expect.any(String),
+        generation_issued_at: expect.any(Number),
+        outcome: 'applied',
+      });
+      safeHttpFailure(
+        await publicationHttp(7202, {
+          state: 'withdrawn',
+          expected_generation: null,
+        }),
+        409,
+        'PUBLICATION_GENERATION_MISMATCH',
+      );
+      safeHttpFailure(
+        await http('/7202/ingestion-authorization', ingestion, 'POST'),
+        409,
+        'PUBLICATION_WITHDRAWN',
+      );
+      expect(await auditSnapshot(7202)).toBeNull();
+      const failedChangeHttp = await http(
+        '/fixture/http-change-failure',
+        admin,
+        'PUT',
+        {
+          state: 'withdrawn',
+          expected_generation: rollbackAdminPermit.generation,
+        },
+      );
+      safeHttpFailure(failedChangeHttp, 500, 'INTERNAL_SERVER_ERROR');
+      expect(await inspect(7004)).toEqual(rollbackAdminControl);
+      expect(await auditSnapshot(7004)).toEqual(rollbackAdminRow);
+      const retriedAdmin = await changed(
+        7004,
+        'withdrawn',
+        rollbackAdminPermit.generation,
+        1_700_000_040_999,
+      );
+      expect(retriedAdmin).toEqual({
+        steam_app_id: 7004,
+        state: 'withdrawn',
+        generation: expect.any(String),
+        generation_issued_at: 1_700_000_040,
+        outcome: 'applied',
+      });
+      expect(await auditSnapshot(7004)).toBeNull();
+      const { outcome: _retriedOutcome, ...retriedControl } = retriedAdmin;
+      expect(
+        await change(
+          7004,
+          {
+            state: 'eligible',
+            expected_generation: retriedAdmin.generation,
+          },
+          1_700_000_050_999,
+          'change-fail',
+        ),
+      ).toEqual({ error: { code: 'INTERNAL_SERVER_ERROR' } });
+      expect(await inspect(7004)).toEqual(retriedControl);
+      expect(await auditSnapshot(7004)).toBeNull();
+
       expect(await json('/fixture/audit')).toEqual({
         tables: [
           { name: '__alchemy_migrations' },
@@ -2131,14 +3160,18 @@ it('persists generation-fenced snapshots, serves only eligible last-known applic
           [
             1, 1001, 1002, 1003, 1004, 2001, 2002, 3001, 3002, 3101, 3102, 3201,
             3202, 4001, 4101, 4201, 4202, 4203, 4204, 4205, 4206, 4207, 4208,
-            4209, 5001, 5101, 5102, 5103, 6000, 6001, 6002, 6003, 4294967295,
+            4209, 5001, 5101, 5102, 5103, 6000, 6001, 6002, 6003, 7001, 7002,
+            7003, 7004, 7005, 7100, 7101, 7102, 7103, 7110, 7111, 7112, 7113,
+            7120, 7121, 7201, 7202, 7204, 4294967295,
           ].map(inspect),
         ),
         snapshots: await Promise.all(
           [
             1001, 1002, 1003, 1004, 2002, 3101, 3102, 3201, 3202, 4101, 4201,
             4202, 4203, 4204, 4205, 4206, 4207, 4208, 4209, 5001, 5101, 5102,
-            5103, 6000, 6001, 6002, 6003,
+            5103, 6000, 6001, 6002, 6003, 7001, 7002, 7003, 7004, 7005, 7100,
+            7101, 7102, 7103, 7110, 7111, 7112, 7113, 7120, 7121, 7201, 7202,
+            7204,
           ].map(async (id) => ({ id, snapshot: await auditSnapshot(id) })),
         ),
       };
@@ -2170,6 +3203,13 @@ it('persists generation-fenced snapshots, serves only eligible last-known applic
               steam_app_id: stored.steam_app_id,
               generation: stored.generation,
               minimum_observed_at: stored.generation_issued_at,
+            },
+          );
+          expect(await inspect(stored.steam_app_id)).toEqual(stored);
+        } else if (stored.state === 'withdrawn') {
+          expect(await json(`/fixture/acquire/${stored.steam_app_id}`)).toEqual(
+            {
+              error: { code: 'PUBLICATION_WITHDRAWN' },
             },
           );
           expect(await inspect(stored.steam_app_id)).toEqual(stored);

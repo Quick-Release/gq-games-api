@@ -3,7 +3,7 @@
 // See LICENSE in the repository root.
 
 import { eq, sql } from 'drizzle-orm';
-import { Clock, Deferred, Effect, Layer, Schema } from 'effect';
+import { Clock, Deferred, Effect, Fiber, Layer, Schema } from 'effect';
 import { createApp } from '../../src/app';
 import { Database } from '../../src/db/database';
 import { applicationSnapshot, publicationControl } from '../../src/db/schema';
@@ -53,6 +53,14 @@ const submission = Schema.Struct({
 const competingSubmissions = Schema.Struct({
   generation: Schema.Unknown,
   snapshots: Schema.Array(Schema.Unknown),
+});
+
+const publicationCompetition = Schema.Struct({
+  other: Schema.Literals(['change', 'acquire', 'submit']),
+  withdrawal_first: Schema.Boolean,
+  expected_generation: Schema.NullOr(Schema.String),
+  other_change: Schema.optionalKey(Schema.Unknown),
+  snapshot: Schema.optionalKey(Schema.Unknown),
 });
 
 const fixedClock = (clock: Clock.Clock, millis: number) => ({
@@ -227,6 +235,114 @@ const snapshotContenders = (steamAppId: number, input: unknown) =>
     return { arrivals, results };
   });
 
+const publicationContenders = (
+  binding: D1Database,
+  steamAppId: number,
+  input: unknown,
+) =>
+  Effect.gen(function* () {
+    const command = Schema.decodeUnknownSync(publicationCompetition)(input);
+    const clock = yield* Clock.Clock;
+    const responses = yield* Deferred.make<void>();
+    let arrivals = 0;
+    const gate = () =>
+      Effect.gen(function* () {
+        return {
+          arrived: yield* Deferred.make<void>(),
+          release: yield* Deferred.make<void>(),
+          committed: yield* Deferred.make<void>(),
+        };
+      });
+    const withdrawalGate = yield* gate();
+    const otherGate = yield* gate();
+    const gatedBinding = (controls: typeof withdrawalGate) =>
+      ({
+        prepare: binding.prepare.bind(binding),
+        async batch<T = unknown>(statements: D1PreparedStatement[]) {
+          arrivals++;
+          await Effect.runPromise(
+            Deferred.succeed(controls.arrived, undefined),
+          );
+          await Effect.runPromise(Deferred.await(controls.release));
+          const result = await binding.batch<T>(statements);
+          await Effect.runPromise(
+            Deferred.succeed(controls.committed, undefined),
+          );
+          // Delay even the winner's response until BOTH real batches commit.
+          // Its outcome must still describe its own atomic decision, not a
+          // later separately interleavable classification read.
+          await Effect.runPromise(Deferred.await(responses));
+          return result;
+        },
+        exec: binding.exec.bind(binding),
+        dump: binding.dump.bind(binding),
+        withSession: binding.withSession.bind(binding),
+      }) satisfies D1Database;
+    const invoke = (controls: typeof withdrawalGate, withdrawal: boolean) =>
+      Effect.gen(function* () {
+        const catalog = yield* Catalog;
+        if (withdrawal) {
+          return yield* catalog.changePublication(steamAppId, {
+            state: 'withdrawn',
+            expected_generation: command.expected_generation,
+          });
+        }
+        switch (command.other) {
+          case 'change':
+            return yield* catalog.changePublication(
+              steamAppId,
+              command.other_change,
+            );
+          case 'acquire':
+            return yield* catalog.acquireAuthorization(steamAppId);
+          case 'submit':
+            return yield* catalog.submitSnapshot(
+              steamAppId,
+              command.expected_generation,
+              command.snapshot,
+              approvedSources,
+            );
+        }
+      }).pipe(
+        // The outer fixture already provides Catalog.layer. Freshness is
+        // essential here: inherited memoization would reuse that ungated
+        // service and neither contender would ever arrive at its own gate.
+        Effect.provide(
+          Layer.fresh(Catalog.layer).pipe(
+            Layer.provide(Database.layer(gatedBinding(controls))),
+          ),
+        ),
+        Effect.provideService(
+          Clock.Clock,
+          fixedClock(clock, withdrawal ? 1_700_000_020_999 : 1_700_000_010_999),
+        ),
+        Effect.catchTag('CatalogFailure', (failure) =>
+          Effect.succeed({ error: { code: failure.code } }),
+        ),
+      );
+    // Both service invocations reach the actual D1 batch boundary before either
+    // executes. Release and await COMMIT in the requested order, without sleeps.
+    const withdrawal = yield* invoke(withdrawalGate, true).pipe(
+      Effect.forkChild,
+    );
+    const other = yield* invoke(otherGate, false).pipe(Effect.forkChild);
+    yield* Deferred.await(withdrawalGate.arrived);
+    yield* Deferred.await(otherGate.arrived);
+    const ordered = command.withdrawal_first
+      ? [withdrawalGate, otherGate]
+      : [otherGate, withdrawalGate];
+    for (const controls of ordered) {
+      yield* Deferred.succeed(controls.release, undefined);
+      yield* Deferred.await(controls.committed);
+    }
+    yield* Deferred.succeed(responses, undefined);
+    return {
+      withdrawal: yield* Fiber.join(withdrawal),
+      other: yield* Fiber.join(other),
+      arrivals,
+    };
+  });
+
 export default {
   async fetch(request: Request, env: WorkerEnv, ctx: ExecutionContext) {
     const url = new URL(request.url);
@@ -238,6 +354,34 @@ export default {
           request,
         ),
         { ...env, DB: failingReadBinding(env.DB) },
+        ctx,
+      );
+    }
+    if (
+      url.pathname === '/fixture/http-change-no-config' ||
+      url.pathname === '/fixture/http-change-secure'
+    ) {
+      const target = new Request(
+        new URL(
+          '/internal/v1/steam/applications/7204/publication',
+          request.url,
+        ),
+        request,
+      );
+      return url.pathname.endsWith('no-config')
+        ? app.fetch(target, { ...env, PUBLICATION_ADMIN_BEARER_TOKEN: '' }, ctx)
+        : createApp().fetch(target, env, ctx);
+    }
+    if (url.pathname === '/fixture/http-change-failure') {
+      return app.fetch(
+        new Request(
+          new URL(
+            '/internal/v1/steam/applications/7004/publication',
+            request.url,
+          ),
+          request,
+        ),
+        { ...env, DB: failingBatchBinding(env.DB) },
         ctx,
       );
     }
@@ -264,7 +408,9 @@ export default {
     const steamAppId = Number(id);
     const counted = countingBinding(env.DB);
     const binding =
-      operation === 'fail' || operation === 'submit-fail'
+      operation === 'fail' ||
+      operation === 'submit-fail' ||
+      operation === 'change-fail'
         ? failingBatchBinding(env.DB)
         : operation === 'lookup-counted'
           ? counted.db
@@ -272,7 +418,10 @@ export default {
             ? failingReadBinding(env.DB)
             : env.DB;
     const input =
-      operation?.startsWith('submit') || operation === 'snapshot-contenders'
+      operation?.startsWith('submit') ||
+      operation?.startsWith('change') ||
+      operation === 'snapshot-contenders' ||
+      operation === 'publication-contenders'
         ? await request.json()
         : undefined;
     const catalogLayer = Catalog.layer.pipe(
@@ -386,7 +535,25 @@ export default {
       if (operation === 'snapshot-contenders') {
         return yield* snapshotContenders(steamAppId, input);
       }
+      if (operation === 'publication-contenders') {
+        return yield* publicationContenders(env.DB, steamAppId, input);
+      }
       const catalog = yield* Catalog;
+      if (operation?.startsWith('change')) {
+        const clock = yield* Clock.Clock;
+        return yield* catalog.changePublication(steamAppId, input).pipe(
+          Effect.provideService(
+            Clock.Clock,
+            fixedClock(
+              clock,
+              Number(url.searchParams.get('millis') ?? '1700000020999'),
+            ),
+          ),
+          Effect.catchTag('CatalogFailure', (failure) =>
+            Effect.succeed({ error: { code: failure.code } }),
+          ),
+        );
+      }
       if (operation?.startsWith('submit')) {
         const { generation, snapshot } =
           Schema.decodeUnknownSync(submission)(input);

@@ -24,9 +24,9 @@
   The App ID primary key is the only index; base targets need not exist. No raw
   payload or delivery archive exists.
 - `src/services/catalog.ts` supplies the cohesive Effect `Catalog` service for
-  anonymous lookup, authorization acquisition, publication inspection, and
-  snapshot submission. Hono supplies Catalog and Database layers per request.
-  Health remains process-only; administrative transitions are not implemented.
+  anonymous lookup, authorization acquisition, publication inspection/change,
+  and snapshot submission. Hono supplies Catalog and Database layers per
+  request. Health remains process-only.
 
 ORM and Kit are both pinned to **`1.0.0-rc.5-ab785fc`**, the exact optional-peer
 version expected by Alchemy **`2.0.0-beta.81`**. The D1 SQL client is pinned to
@@ -67,10 +67,11 @@ should map expected failures deliberately. Do not serialize SQL, parameters, or
 underlying errors into HTTP responses. The Hono error boundary returns a generic
 JSON 500 and never logs raw exceptions. Acquisition/submission/inspection SQL
 failures become a safe `SERVICE_UNAVAILABLE` code, without driver details.
-Lookup recognizes documented transient D1 read errors as `SERVICE_UNAVAILABLE`;
-unknown/permanent query errors become `INTERNAL_SERVER_ERROR`, without retaining
-or logging driver text. Missing HTTP database bindings return 503. The pinned
-client wraps all D1 failures as UnknownError, so this narrow classification uses
+Lookup and publication changes recognize documented transient D1 errors as
+`SERVICE_UNAVAILABLE`; unknown/permanent query errors become
+`INTERNAL_SERVER_ERROR`, without retaining or logging driver text. Missing HTTP
+database bindings return 503. The pinned client wraps all D1 failures as
+UnknownError, so this narrow classification uses
 [documented D1 messages](https://developers.cloudflare.com/d1/observability/debug-d1/#list-of-d1_errors),
 not an assumed typed driver distinction. Node tests check the wrapping/mapping,
 not real outage behavior. D1 transactions and streaming queries are not
@@ -110,6 +111,31 @@ outcome/time, so no post-commit read can reclassify it. Success waits for the
 complete batch commit; a later fixture-injected SQL failure rolls back insertion
 or replacement. Submission never initializes or changes control.
 
+### Atomic administrative publication changes
+
+After strict command validation, `Catalog.changePublication` executes one native
+ordered D1 batch: capture the expectation/outcome and response fields from prior
+control; conditionally delete the snapshot for an authorized withdrawal; then
+conditionally initialize/advance control. Both mutation guards compare the same
+prior control, because deletion does not change it. Null expectation matches
+only absence; a nonnull expectation must match the current generation. Mismatch
+is classified before same-state, and both mismatch and same-state paths perform
+no mutations. No independent precheck or post-commit classification read exists.
+
+Server-generated random generation and Effect-clock timestamp candidates become
+issued control only on initialization or transition; same-state responses retain
+the stored generation/timestamp. Batch success is required before returning the
+captured `applied`/`unchanged` response. A later fixture-injected SQL failure
+rolls back deletion and advancement together. Reinstatement issues eligible
+control without restoring metadata. Acquisition preserves this generation, and
+ingestion still enforces its generation/floor. Only the admin HTTP role can
+invoke this command; acquisition/submission never call it or toggle eligibility.
+
+Withdrawal retains only App ID, state, generation, and issued timestamp. No
+content-bearing reason, raw body, accepted-event history, or alternate metadata
+store is added. Existing reviewed schema/migrations already support these
+operations; this slice requires no new migration.
+
 ### Atomic public lookup eligibility
 
 `Catalog.lookupApplication` performs one parameterized primary SELECT joining
@@ -120,8 +146,8 @@ interleave with the snapshot read. Orphan metadata, absent snapshots, eligible
 control without metadata, and withdrawn control all produce `NOT_FOUND`. No
 Sessions, replicas, cache, TTL, inferred release state, or upstream fetch is
 introduced. The observation is last-known, not a freshness guarantee. Previously
-read/in-flight responses and consumer-held copies cannot be recalled; transition
-and lifecycle visibility races are not claimed by this slice.
+read/in-flight responses and consumer-held copies cannot be recalled. Synthetic
+withdrawal tests establish post-commit deletion; this is not consumer recall.
 
 `/health` still reports process health only and never queries D1.
 
@@ -178,12 +204,17 @@ schemas, migrations, seeds, or fixtures.
   lookup flows verify full public representations and service eligibility
   against synthetic missing/eligible/withdrawn fixture states, including
   snapshots without eligible control. Restart checks persistent control and
-  Alchemy migration history without replay. All state, storage, migration
-  copies, logs, and home/config directories are temporary and cleaned up; no
-  Cloudflare credentials or second migration executor are involved.
+  Alchemy migration history without replay. Publication tests cover absent and
+  populated withdrawal, mutation-free same-state/mismatched commands,
+  reinstatement/fresh-publication fences, late-SQL rollback, and coordinated
+  admin/acquisition/ingestion commit-order scenarios. A narrow persisted-state
+  audit verifies deletion and minimal control, without relying on public lookup.
+  All state, storage, migration copies, logs, and home/config directories are
+  temporary and cleaned up; no Cloudflare credentials or second migration
+  executor are involved.
 - Local workerd evidence is not production routing, replica, latency, outage,
-  real-source rights, or deployment evidence. Administrative transitions and
-  cross-route lifecycle races remain unimplemented and untested by this slice.
+  real-source rights, or deployment evidence. Source-field rights and express
+  durable-control retention permission remain gates before real publication.
 - CI runs both suites, migration checks, and the offline Worker build without
   Cloudflare credentials. The integration fixture rejects non-dev execution; it
   is not a deployment target.

@@ -85,6 +85,7 @@ const privateFields = {
 };
 
 const unused = {
+  changePublication: () => Effect.die('unused'),
   acquireAuthorization: () => Effect.die('unused'),
   inspectPublication: () => Effect.die('unused'),
   submitSnapshot: () => Effect.die('unused'),

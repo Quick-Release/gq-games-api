@@ -2,17 +2,17 @@
 
 ## Status and scope
 
-**Agreed design; partially implemented under issues #2–#4.** Authorization
-acquisition POST, publication inspection GET, complete snapshot PUT, and
-anonymous public lookup GET now exist, backed by separate durable
-control/snapshot tables and synthetic local workerd tests. `/` and process-only
-`/health` are preserved. Publication PUT remains unimplemented.
+**Agreed design; synthetic local implementation under issues #2–#5.**
+Authorization acquisition POST, publication inspection GET, complete snapshot
+PUT, anonymous public lookup GET, and generation-checked publication PUT now
+exist, backed by separate durable control/snapshot tables and synthetic local
+workerd tests. `/` and process-only `/health` are preserved.
 
 This contract records the HTTP, payload, and atomic-persistence decisions
-confirmed in the design interview. Issues #2–#4 authorize these four operations,
+confirmed in the design interview. Issues #2–#5 authorize these operations,
 reviewed migrations, local configuration, and synthetic local verification, not
-real collection, cloud provisioning, or deployment. Descriptions of the
-remaining operations below are requirements, not claims of implemented behavior.
+real collection, cloud provisioning, or deployment. Runtime evidence and
+source-rights/retention gates remain distinct from the normative requirements.
 
 The initial consumer task is lookup by Steam App ID. Admit verified Game, Demo,
 and DLC applications; no canonical Game identities, editorial editions, search,
@@ -408,10 +408,12 @@ Authorization acquisition's guarded initialization, captured outcome decoding,
 rollback, and concurrent behavior now have synthetic local workerd coverage.
 Snapshot decisions now also have synthetic workerd evidence for whole
 replacement, equality/ordering, generation fences, captured concurrent outcomes,
-and rollback. Administrative transitions **remain unimplemented and
-unvalidated**; the complete contract is not implemented. Preserve Alchemy
-migration ownership; no second migration executor, schema push, or provisioning
-is authorized.
+and rollback. Administrative transitions now have synthetic local workerd
+coverage for expectation checks, same-state preservation, atomic deletion and
+advancement, reinstatement fences, coordinated commit-order races, and rollback.
+Their outcomes are captured inside one ordered batch, not via a later read.
+Preserve Alchemy migration ownership; no second migration executor, schema push,
+or provisioning is authorized.
 
 ## Required synthetic acceptance tests
 
@@ -469,15 +471,17 @@ mocks alone cannot establish D1 concurrency, transaction, or binding behavior.
 
 ### Still gated
 
-Acquisition, inspection, complete snapshot submission, and anonymous lookup have
-HTTP/workerd coverage. Lookup eligibility is verified with synthetic
-control/snapshot fixture states using one primary joined read. Administrative
-transitions and cross-route withdrawal/reinstatement races and visibility tests
-above are still required. Synthetic local workerd cannot validate production
-routing, global latency, outages, replica behavior, or revocation of
-consumer-held copies. Before real publication, approve actual source field and
-retention policies, production abuse/rate limits and access budgets, credentials
-and rotation procedures, operational monitoring/recovery, and deployment. The
-private `gq-crawl` producer must agree to and implement acquire-before-collect,
-clock synchronization, source approval, and retry behavior; no private adapter
-or collection is authorized by this document.
+Acquisition, inspection, complete snapshot submission, anonymous lookup, and
+publication changes have HTTP/workerd coverage. Lookup eligibility is verified
+with synthetic control/snapshot fixture states using one primary joined read.
+Withdrawal/reinstatement tests audit complete deletion/minimal control and
+coordinate competing service operations, including both commit orders against
+acquisition/ingestion and stale administrative commands. A later SQL failure
+proves control and deletion roll back together. Synthetic local workerd cannot
+validate production routing, global latency, outages, replica behavior, or
+revocation of consumer-held copies. Before real publication, approve actual
+source field and retention policies, production abuse/rate limits and access
+budgets, credentials and rotation procedures, operational monitoring/recovery,
+and deployment. The private `gq-crawl` producer must agree to and implement
+acquire-before-collect, clock synchronization, source approval, and retry
+behavior; no private adapter or collection is authorized by this document.

@@ -10,6 +10,7 @@ import { Database } from '../db/database';
 import { applicationSnapshot, publicationControl } from '../db/schema';
 
 import { CatalogFailure } from './catalog-failure';
+import { validatePublicationCommand } from './publication';
 import { validateSnapshot } from './snapshot';
 
 export { CatalogFailure } from './catalog-failure';
@@ -19,6 +20,18 @@ const authorizationRow = Schema.Struct({
   outcome: Schema.Literals(['authorized', 'withdrawn']),
   generation: Schema.String,
   minimum_observed_at: Schema.Number,
+});
+
+const publicationDecisionRow = Schema.Struct({
+  steam_app_id: Schema.Number,
+  state: Schema.Literals(['eligible', 'withdrawn']),
+  generation: Schema.NullOr(Schema.String),
+  generation_issued_at: Schema.NullOr(Schema.Number),
+  outcome: Schema.Literals([
+    'applied',
+    'unchanged',
+    'PUBLICATION_GENERATION_MISMATCH',
+  ]),
 });
 
 const snapshotDecisionRow = Schema.Struct({
@@ -40,7 +53,7 @@ const snapshotDecisionRow = Schema.Struct({
 // are 500, never mistaken for retryable unavailability. Inspect but do not retain
 // or log any driver text. No application retry or second query is introduced.
 // https://developers.cloudflare.com/d1/observability/debug-d1/#list-of-d1_errors
-const temporaryReadFailures = new Set([
+const temporaryDatabaseFailures = new Set([
   'Network connection lost.',
   'D1 DB reset because its code was updated.',
   'Internal error while starting up D1 DB storage caused object to be reset.',
@@ -53,27 +66,30 @@ const temporaryReadFailures = new Set([
   "D1 DB's isolate exceeded its memory limit and was reset.",
   'D1 DB exceeded its CPU time limit and was reset.',
 ]);
-const lookupQueryFailure = (failure: EffectDrizzleQueryError) => {
-  // Drizzle wraps the SQL failure in an Effect Cause, not a bare SqlError.
-  const error = Cause.isCause(failure.cause)
-    ? Cause.findErrorOption(failure.cause)
-    : Option.none();
-  const cause =
-    Option.isSome(error) && error.value instanceof SqlError
-      ? error.value.reason.cause
-      : undefined;
+const databaseFailure = (cause: unknown) => {
   const message =
     cause instanceof Error
       ? cause.message
       : typeof cause === 'string'
         ? cause
         : '';
-  const temporary = temporaryReadFailures.has(
+  const temporary = temporaryDatabaseFailures.has(
     message.replace(/^D1_ERROR: /, ''),
   );
   return new CatalogFailure({
     code: temporary ? 'SERVICE_UNAVAILABLE' : 'INTERNAL_SERVER_ERROR',
   });
+};
+const lookupQueryFailure = (failure: EffectDrizzleQueryError) => {
+  // Drizzle wraps the SQL failure in an Effect Cause, not a bare SqlError.
+  const error = Cause.isCause(failure.cause)
+    ? Cause.findErrorOption(failure.cause)
+    : Option.none();
+  return databaseFailure(
+    Option.isSome(error) && error.value instanceof SqlError
+      ? error.value.reason.cause
+      : undefined,
+  );
 };
 
 const makeCatalog = Effect.gen(function* () {
@@ -224,6 +240,97 @@ const makeCatalog = Effect.gen(function* () {
       state: row?.state ?? ('uninitialized' as const),
       generation: row?.generation ?? null,
       generation_issued_at: row?.generationIssuedAt ?? null,
+    };
+  });
+
+  const changePublication = Effect.fn('Catalog.changePublication')(function* (
+    steamAppId: number,
+    input: unknown,
+  ) {
+    const { state, expected_generation: expected } =
+      yield* validatePublicationCommand(steamAppId, input);
+    const generation = yield* Effect.sync(() => crypto.randomUUID());
+    const issuedAt = Math.floor((yield* Clock.currentTimeMillis) / 1000);
+
+    // Candidates become issued generations ONLY on initialization/transition.
+    // Capture pre-state, guarded deletion, and guarded control advancement in
+    // one ordered primary D1 transaction. Deletion precedes advancement so both
+    // guards compare the SAME prior control. SQL failure rolls everything back;
+    // rejection and same-state paths deliberately execute no mutations.
+    const [captured] = yield* sql
+      .batch([
+        sql`select steam_app_id, ${state} as state, outcome,
+            case when outcome = 'applied' then ${generation}
+              else prior_generation end as generation,
+            case when outcome = 'applied' then ${issuedAt}
+              else prior_issued_at end as generation_issued_at
+            from (
+              select requested.steam_app_id, p.generation as prior_generation,
+                p.generation_issued_at as prior_issued_at,
+                case
+                  when (p.steam_app_id is null and ${expected} is not null)
+                    or (p.steam_app_id is not null and p.generation is not ${expected})
+                    then 'PUBLICATION_GENERATION_MISMATCH'
+                  when p.state = ${state} then 'unchanged'
+                  else 'applied'
+                end as outcome
+              from (select ${steamAppId} as steam_app_id) requested
+              left join steam_application_publication p on p.steam_app_id = requested.steam_app_id
+            ) decision`,
+        sql`delete from steam_application_snapshot
+            where steam_app_id = ${steamAppId} and ${state} = 'withdrawn'
+              and (
+                (${expected} is null and not exists (
+                  select 1 from steam_application_publication where steam_app_id = ${steamAppId}
+                ))
+                or exists (
+                  select 1 from steam_application_publication
+                  where steam_app_id = ${steamAppId} and generation = ${expected} and state <> ${state}
+                )
+              )`,
+        sql`insert into steam_application_publication
+            (steam_app_id, state, generation, generation_issued_at)
+            select ${steamAppId}, ${state}, ${generation}, ${issuedAt}
+            where (
+              (${expected} is null and not exists (
+                select 1 from steam_application_publication where steam_app_id = ${steamAppId}
+              ))
+              or exists (
+                select 1 from steam_application_publication
+                where steam_app_id = ${steamAppId} and generation = ${expected} and state <> ${state}
+              )
+            )
+            on conflict (steam_app_id) do update set
+              state = excluded.state,
+              generation = excluded.generation,
+              generation_issued_at = excluded.generation_issued_at
+            where steam_application_publication.generation = ${expected}
+              and steam_application_publication.state <> ${state}`,
+      ])
+      .pipe(
+        Effect.mapError((failure) => databaseFailure(failure.reason.cause)),
+      );
+    const row = yield* Schema.decodeUnknownEffect(publicationDecisionRow)(
+      captured.length === 1 ? captured[0] : undefined,
+    ).pipe(
+      Effect.mapError(
+        () => new CatalogFailure({ code: 'INTERNAL_SERVER_ERROR' }),
+      ),
+    );
+    if (row.outcome === 'PUBLICATION_GENERATION_MISMATCH') {
+      return yield* Effect.fail(new CatalogFailure({ code: row.outcome }));
+    }
+    if (row.generation === null || row.generation_issued_at === null) {
+      return yield* Effect.fail(
+        new CatalogFailure({ code: 'INTERNAL_SERVER_ERROR' }),
+      );
+    }
+    return {
+      steam_app_id: row.steam_app_id,
+      state: row.state,
+      generation: row.generation,
+      generation_issued_at: row.generation_issued_at,
+      outcome: row.outcome,
     };
   });
 
@@ -394,6 +501,7 @@ const makeCatalog = Effect.gen(function* () {
     lookupApplication,
     acquireAuthorization,
     inspectPublication,
+    changePublication,
     submitSnapshot,
   };
 });

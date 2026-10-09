@@ -12,6 +12,7 @@ const prefix = 'https://catalog.example.invalid/internal/v1/steam/applications';
 const successfulCatalog = () =>
   Layer.succeed(Catalog, {
     lookupApplication: () => Effect.die('not used'),
+    changePublication: () => Effect.die('not used'),
     submitSnapshot: () => Effect.die('not used'),
     acquireAuthorization: (steamAppId: number) =>
       Effect.succeed({
@@ -477,6 +478,7 @@ describe('catalog HTTP boundary', () => {
     async (state) => {
       const catalogLayer = Layer.succeed(Catalog, {
         lookupApplication: () => Effect.die('not used'),
+        changePublication: () => Effect.die('not used'),
         submitSnapshot: () => Effect.die('not used'),
         acquireAuthorization: () => Effect.die('not used'),
         inspectPublication: (steamAppId: number) =>
@@ -526,6 +528,7 @@ describe('catalog HTTP boundary', () => {
         });
         const catalogLayer = Layer.succeed(Catalog, {
           lookupApplication: () => Effect.die('not used'),
+          changePublication: () => Effect.die('not used'),
           submitSnapshot: () => Effect.die('not used'),
           acquireAuthorization: () => Effect.fail(failure),
           inspectPublication: () => Effect.fail(failure),
@@ -554,6 +557,7 @@ describe('catalog HTTP boundary', () => {
         ]) {
           const catalogLayer = Layer.succeed(Catalog, {
             lookupApplication: () => Effect.die('not used'),
+            changePublication: () => Effect.die('not used'),
             submitSnapshot: () => Effect.die('not used'),
             acquireAuthorization: () => Effect.die(defect),
             inspectPublication: () => Effect.die(defect),
@@ -612,7 +616,7 @@ describe('catalog HTTP boundary', () => {
     const { app, env } = fixture();
     const ids = new Set<string | null>();
     for (const { path, method } of [
-      { path: '/1001/publication', method: 'PUT' },
+      { path: '/1001/publication', method: 'POST' },
       { path: '/1001/ingestion-authorization', method: 'GET' },
       { path: '/1001/snapshot', method: 'GET' },
       { path: '/1001/missing', method: 'GET' },

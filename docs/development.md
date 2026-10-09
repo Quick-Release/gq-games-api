@@ -5,7 +5,8 @@
 ```text
 src/app.ts               Hono HTTP boundary, exported factory for tests
 src/services/health.ts   Process-only health Effect
-src/services/catalog.ts  Lookup/acquisition/inspection/snapshot Effect service
+src/services/catalog.ts  Lookup/acquisition/publication/snapshot Effect service
+src/services/publication.ts Strict content-free publication command validation
 src/services/snapshot.ts Strict snapshot validation and synthetic source policy
 src/http/catalog.ts      Catalog transport, private authentication, and errors
 src/db/                 Drizzle schema and Effect-native D1 service
@@ -107,18 +108,21 @@ Keep credentials out of pull-request jobs, especially contributions from forks.
    deployed resource name.
 5. Verify `/health` on the returned URL and record the runtime experiment.
 
-`workersDev: true` makes the deployed Worker publicly accessible. Two private
-publication-control operations and complete snapshot submission are implemented;
-anonymous public lookup is also implemented. Admin transitions, quotas, and CORS
-policy are not. D1 retains minimal publication control separately from complete
-synthetic snapshots. Deploy can now create a D1 database, so review costs and
-migration SQL as well as the public HTTP surface before deploying. Lookup is
-last-known synthetic data, not a live upstream read or freshness promise. One
-primary D1 query joins existing snapshots to eligible control; absent/withdrawn
-cases share a safe 404. No-store and server request IDs apply to every catalog
-response, including errors. Consumer-held copies and responses already read
-cannot be revoked. Full withdrawal/reinstatement lifecycle verification remains
-outstanding.
+`workersDev: true` makes the deployed Worker publicly accessible. Private
+publication acquisition/inspection/change and complete snapshot submission are
+implemented; anonymous public lookup is also implemented. Production quotas and
+CORS policy are not. D1 retains minimal publication control separately from
+complete synthetic snapshots. Deploy can now create a D1 database, so review
+costs and migration SQL as well as the public HTTP surface before deploying.
+Lookup is last-known synthetic data, not a live upstream read or freshness
+promise. One primary D1 query joins existing snapshots to eligible control;
+absent/withdrawn cases share a safe 404. No-store and server request IDs apply
+to every catalog response, including errors. Consumer-held copies and responses
+already read cannot be revoked. Synthetic local workerd verifies
+withdrawal/reinstatement, stale-generation fencing, coordinated commit-order
+races, and atomic rollback; real-source approval and express minimal-control
+retention permission remain required, alongside production
+operational/credential rollout and deployment approval.
 
 ## State and secrets
 

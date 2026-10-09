@@ -6,9 +6,9 @@ Effect, Hono, Drizzle, and Vite+**.
 **Status: research + synthetic catalog lookup/ingestion/publication control.**
 The repository implements process health, anonymous last-known snapshot lookup,
 complete snapshot submission, publication authorization acquisition, and admin
-inspection on local D1. Administrative state changes are not implemented. No
-cloud resources have been provisioned or service deployed. `gq-crawl`
-integration and real-source approval remain out of scope.
+inspection/withdrawal/reinstatement on local D1. No cloud resources have been
+provisioned or service deployed. `gq-crawl` integration and real-source approval
+remain out of scope.
 
 ## Direction
 
@@ -55,6 +55,7 @@ Implemented routes:
 | POST   | `/internal/v1/steam/applications/{steamAppId}/ingestion-authorization` | Ingestion-role acquisition of current publication generation |
 | GET    | `/internal/v1/steam/applications/{steamAppId}/publication`             | Admin-role inspection, including absent control              |
 | PUT    | `/internal/v1/steam/applications/{steamAppId}/snapshot`                | Ingestion-role atomic complete-snapshot submission           |
+| PUT    | `/internal/v1/steam/applications/{steamAppId}/publication`             | Admin-role generation-checked withdrawal/reinstatement       |
 
 Acquisition atomically initializes only absent control, preserves existing
 eligible generation/timestamp, and refuses withdrawal. Inspection does not
@@ -65,8 +66,23 @@ identical content unchanged, or rejects equal-time conflicts. Explicit nulls
 clear old fields; no-op/rejection preserves the accepted event. Submission never
 initializes or changes publication control. No real upstream content,
 publication reason, raw body, or delivery history is stored. See
-[the contract](docs/steam-catalog-contract.md) for response shapes and remaining
-proposed operations.
+[the contract](docs/steam-catalog-contract.md) for response shapes.
+
+Admin publication PUT requires exactly `state` (`eligible` or `withdrawn`) and
+`expected_generation` (the inspected generation, or null for absent control).
+Initialization/transitions issue a fresh generation and observation floor;
+current-generation same-state commands preserve both and return `unchanged`.
+Mismatched expectations return 409 even for a matching state. Withdrawal deletes
+all snapshot metadata, accepted event, and provenance atomically with control
+advancement, retaining only the four minimal control fields. Reinstatement
+restores no metadata: acquire the new generation, then genuinely recollect.
+Queued old generations cannot republish, even with newer timestamps. After an
+uncertain admin response, GET control and reconcile the intended decision; do
+not blindly replace an old expectation with a newer one. Delisting/source
+omission and calendar passage do not change publication or Release Status. There
+is no withdrawal-reason archive, event ledger, control expiry, or forget
+operation. Real publication still requires express minimal-control retention
+permission and source-field access/storage/redistribution/deletion approval.
 
 Public lookup accepts canonical decimal App IDs from 1 through 4294967295,
 without credentials or a generation. It returns only metadata and public
@@ -75,8 +91,9 @@ that requires both eligible control and an existing snapshot. Missing and
 withdrawn applications have identical `NOT_FOUND` 404s. All catalog responses,
 including failures, are no-store with server-owned request IDs. Lookup never
 fetches upstream content or promises current availability/freshness. No-store
-does not recall previously read responses or consumer-held copies; lifecycle
-transition/race verification remains a separate slice.
+does not recall previously read responses or consumer-held copies. Synthetic
+workerd tests verify withdrawal/reinstatement, coordinated commit-order races,
+and rollback; they do not prove production routing or real-source rights.
 
 Private routes require HTTPS and distinct opaque Worker secrets
 `INGESTION_BEARER_TOKEN` / `PUBLICATION_ADMIN_BEARER_TOKEN`; missing or

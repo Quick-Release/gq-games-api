@@ -137,7 +137,7 @@ const rejectBody = async (c: Context<CatalogHttpEnv>) => {
 
 // Never trust Content-Length to establish either size or completeness. Decode
 // only after collecting at most the actual 32 KiB limit, rejecting invalid UTF-8.
-const readSnapshotBody = async (c: Context<CatalogHttpEnv>) => {
+const readJsonBody = async (c: Context<CatalogHttpEnv>) => {
   const media = c.req.header('Content-Type') ?? '';
   const encoding = c.req.header('Content-Encoding');
   if (
@@ -329,7 +329,7 @@ export const mountCatalog = (
     if (denied) return denied;
     const steamAppId = parseAppId(c.req.param('steamAppId'));
     if (steamAppId === undefined) return catalogError(c, 400, 'INVALID_APP_ID');
-    const body = await readSnapshotBody(c);
+    const body = await readJsonBody(c);
     if (body.error) return body.error;
 
     return runCatalog(
@@ -345,6 +345,37 @@ export const mountCatalog = (
             c.env.APPROVED_SNAPSHOT_SOURCES,
           );
         return { steam_app_id, outcome, current_observed_at };
+      }),
+    );
+  });
+
+  app.put(`${prefix}/:steamAppId/publication`, async (c) => {
+    const denied = authenticate(c, 'admin', options);
+    if (denied) return denied;
+    const steamAppId = parseAppId(c.req.param('steamAppId'));
+    if (steamAppId === undefined) return catalogError(c, 400, 'INVALID_APP_ID');
+    const body = await readJsonBody(c);
+    if (body.error) return body.error;
+
+    return runCatalog(
+      c,
+      options,
+      Effect.gen(function* () {
+        const catalog = yield* Catalog;
+        const {
+          steam_app_id,
+          state,
+          generation,
+          generation_issued_at,
+          outcome,
+        } = yield* catalog.changePublication(steamAppId, body.input);
+        return {
+          steam_app_id,
+          state,
+          generation,
+          generation_issued_at,
+          outcome,
+        };
       }),
     );
   });

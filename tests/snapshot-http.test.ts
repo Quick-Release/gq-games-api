@@ -49,6 +49,7 @@ const fixture = () => {
     lookupApplication: () => Effect.die('unused'),
     acquireAuthorization: () => Effect.die('unused'),
     inspectPublication: () => Effect.die('unused'),
+    changePublication: () => Effect.die('unused'),
     submitSnapshot: (
       id: number,
       generation: unknown,
@@ -848,6 +849,7 @@ describe('complete snapshot HTTP boundary (not D1 atomicity evidence)', () => {
         lookupApplication: () => Effect.die('unused'),
         acquireAuthorization: () => Effect.die('unused'),
         inspectPublication: () => Effect.die('unused'),
+        changePublication: () => Effect.die('unused'),
         submitSnapshot: () =>
           Effect.promise(async () => {
             started();
@@ -890,6 +892,7 @@ describe('complete snapshot HTTP boundary (not D1 atomicity evidence)', () => {
           lookupApplication: () => Effect.die('unused'),
           acquireAuthorization: () => Effect.die('unused'),
           inspectPublication: () => Effect.die('unused'),
+          changePublication: () => Effect.die('unused'),
           submitSnapshot: () =>
             Effect.die(
               new Error(
@@ -959,6 +962,7 @@ describe('complete snapshot HTTP boundary (not D1 atomicity evidence)', () => {
           lookupApplication: () => Effect.die('unused'),
           acquireAuthorization: () => Effect.die('unused'),
           inspectPublication: () => Effect.die('unused'),
+          changePublication: () => Effect.die('unused'),
           submitSnapshot: (id: number) =>
             Effect.succeed({
               steam_app_id: id,
@@ -998,6 +1002,7 @@ describe('complete snapshot HTTP boundary (not D1 atomicity evidence)', () => {
           lookupApplication: () => Effect.die('unused'),
           acquireAuthorization: () => Effect.die('unused'),
           inspectPublication: () => Effect.die('unused'),
+          changePublication: () => Effect.die('unused'),
           submitSnapshot: () =>
             Effect.fail(
               Object.assign(new CatalogFailure({ code }), {
