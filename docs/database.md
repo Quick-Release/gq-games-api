@@ -168,10 +168,14 @@ pnpm db:check
 pnpm dev
 ```
 
-Commit the generated `drizzle/<timestamp>_<name>/migration.sql` and
+Add copyright and SPDX SQL comment headers before initial application, and
+commit the generated `drizzle/<timestamp>_<name>/migration.sql` and
 `snapshot.json` together. Never rewrite a migration that has already been
-applied. Alchemy applies pending SQL to local D1 on dev reconciliation and owns
-history in `__alchemy_migrations`. That durable D1 history is independent of the
+applied, even to add comments: the pinned Alchemy reader hashes the complete SQL
+text. Missing historical notices belong in adjacent `migration.sql.license` SPDX
+sidecars, which are not executable migrations and leave SQL hashes intact.
+Alchemy applies pending SQL to local D1 on dev reconciliation and owns history
+in `__alchemy_migrations`. That durable D1 history is independent of the
 ephemeral Worker state used for secret-bearing local dev/preview. The local
 state adapter persists only credential-free D1 resource state, including its
 local identity; reconstructing Worker declarations after restart neither loses
