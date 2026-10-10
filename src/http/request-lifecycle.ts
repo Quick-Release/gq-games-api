@@ -87,27 +87,30 @@ export const createRequestLifecycle = (options: {
   const dispatch = <T>(operation: () => Promise<T>) => {
     check();
     phase = 'dispatched';
-    observe('write_dispatched');
-    const failed = () => {
+    let pending: Promise<T>;
+    try {
+      // No observer, user callback, or async gap between guard and invocation.
+      pending = operation();
+    } catch (error) {
+      observe('write_dispatched');
       phase = 'outcome_observed';
       observe('write_failed');
-    };
-    try {
-      return operation().then(
-        (value) => {
-          phase = 'outcome_observed';
-          observe('write_succeeded');
-          return value;
-        },
-        (error: unknown) => {
-          failed();
-          throw error;
-        },
-      );
-    } catch (error) {
-      failed();
       throw error;
     }
+    observe('write_dispatched');
+    return pending.then(
+      (value) => {
+        phase = 'outcome_observed';
+        observe('write_succeeded');
+        return value;
+      },
+      (error: unknown) => {
+        // Observed rejection is not a database rollback acknowledgement.
+        phase = 'outcome_observed';
+        observe('write_failed');
+        throw error;
+      },
+    );
   };
   return {
     check,
@@ -120,11 +123,15 @@ export const createRequestLifecycle = (options: {
       // An aborted run still returns an Exit and disposes its owned handles.
       const preAborted = phase === 'before_dispatch' && options.signal.aborted;
       if (!preAborted) check();
-      const program = preAborted
-        ? Effect.interrupt
-        : policy === 'mutation' && beforeMutation
+      const work =
+        policy === 'mutation' && beforeMutation
           ? Effect.andThen(beforeMutation, effect)
           : effect;
+      // Attach the runner's abort listener (and host allowance) before user
+      // checkpoints can synchronously abort. The actual write guard stays sync.
+      const program = preAborted
+        ? Effect.interrupt
+        : Effect.andThen(Effect.yieldNow, work);
       const promise = Effect.runPromiseExit(program, {
         signal: interrupt.signal,
       })
@@ -159,7 +166,6 @@ export const createRequestLifecycle = (options: {
       });
       return promise.finally(() => bodyWaiters.delete(rejectWait));
     },
-    finishBody,
     readerAcquired: () => observe('body_reader_acquired'),
     readerReleased: () => {
       finishBody();

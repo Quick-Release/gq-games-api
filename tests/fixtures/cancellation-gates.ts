@@ -4,9 +4,19 @@
 
 import { Effect } from 'effect';
 
+const gateKinds = [
+  'pre',
+  'batch',
+  'read',
+  'upload',
+  'sql-failure',
+  'decode-failure',
+] as const;
+export type CancellationGateKind = (typeof gateKinds)[number];
+
 // Shared coordination contains only synthetic flags/counters. Every invocation
 // owns its timer I/O, body, statements, results, and pending promises.
-const gate = (kind: string) => ({
+const gate = (kind: CancellationGateKind) => ({
   kind,
   claims: 0,
   checkpoint: 0,
@@ -54,18 +64,9 @@ export const createCancellationGates = () => {
     if (request.method !== (action === 'state' ? 'GET' : 'POST'))
       return new Response(null, { status: 405 });
     if (action === 'arm') {
-      const kind = new URL(request.url).searchParams.get('kind') ?? 'pre';
-      if (
-        ![
-          'pre',
-          'batch',
-          'read',
-          'upload',
-          'sql-failure',
-          'decode-failure',
-        ].includes(kind)
-      )
-        return new Response(null, { status: 400 });
+      const requested = new URL(request.url).searchParams.get('kind') ?? 'pre';
+      const kind = gateKinds.find((candidate) => candidate === requested);
+      if (!kind) return new Response(null, { status: 400 });
       if (gates.has(key)) return new Response(null, { status: 409 });
       gates.set(key, gate(kind));
     }

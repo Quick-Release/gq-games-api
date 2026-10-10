@@ -38,6 +38,53 @@ it('observes a dispatched mutation after abort and extends exactly the same exec
   lifecycle.dispose();
 });
 
+it('has no observer callback between the cancellation check and actual binding invocation', async () => {
+  const controller = new AbortController();
+  const enteredWithAbort: boolean[] = [];
+  const lifecycle = createRequestLifecycle({
+    signal: controller.signal,
+    requestId: 'synthetic-id',
+    observe: (event) => {
+      if (event.event === 'write_dispatched') controller.abort();
+    },
+  });
+  const exit = await lifecycle.run(
+    Effect.promise(() =>
+      lifecycle.dispatch(() => {
+        enteredWithAbort.push(controller.signal.aborted);
+        return Promise.resolve('binding result');
+      }),
+    ),
+    'mutation',
+  );
+  expect(enteredWithAbort).toEqual([false]);
+  expect(exit).toEqual(Exit.succeed('binding result'));
+});
+
+it('classifies a synchronous checkpoint abort as interruption without executing the mutation', async () => {
+  const controller = new AbortController();
+  const calls: string[] = [];
+  const lifecycle = createRequestLifecycle({
+    signal: controller.signal,
+    requestId: 'synthetic-id',
+    observe: () => {},
+  });
+  const exit = await lifecycle.run(
+    Effect.promise(() =>
+      lifecycle.dispatch(() => {
+        calls.push('write');
+        return Promise.resolve('result');
+      }),
+    ),
+    'mutation',
+    Effect.sync(() => controller.abort()),
+  );
+  expect(calls).toEqual([]);
+  expect(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)).toBe(
+    true,
+  );
+});
+
 it('reports a cleanup defect rather than hiding it as expected interruption', async () => {
   const controller = new AbortController();
   const entered = Promise.withResolvers<void>();

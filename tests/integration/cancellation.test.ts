@@ -20,6 +20,7 @@ import { fileURLToPath, URL } from 'node:url';
 import { promisify } from 'node:util';
 import { Schema } from 'effect';
 import { expect, it } from 'vite-plus/test';
+import type { CancellationGateKind } from '../fixtures/cancellation-gates';
 
 const pause = (ms: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -94,7 +95,7 @@ it('distinguishes physical cancellation, native D1 outcome, and cooperative clea
     const value: unknown = JSON.parse(text);
     return value;
   };
-  const arm = (key: string, kind: string) =>
+  const arm = (key: string, kind: CancellationGateKind) =>
     json(`/fixture/gates/${key}/arm?kind=${kind}`, { method: 'POST' });
   const action = (key: string, name: string) =>
     json(`/fixture/gates/${key}/${name}`, { method: 'POST' });
