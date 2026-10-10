@@ -39,7 +39,10 @@ export const apiConfig = {
       Config.withDefault(''),
     ),
   },
-  compatibility: { date: '2026-10-07', flags: ['nodejs_compat'] },
+  compatibility: {
+    date: '2026-10-07',
+    flags: ['nodejs_compat', 'enable_request_signal'],
+  },
   workersDev: true,
   dev: { host: '127.0.0.1', port: 8787, strictPort: true },
   build: { output: { dir: 'dist', entryFileNames: 'index.js' } },

@@ -16,7 +16,10 @@ This contract records the HTTP, payload, and atomic-persistence decisions
 confirmed in the design interview. The
 [fixed normative revision](https://github.com/Quick-Release/gq-games-api/blob/0a560ab47e331b478e2cadc440567dc413459e4b/docs/steam-catalog-contract.md)
 remains authoritative; status/evidence updates do not relax its requirements.
-Parent #1 scopes reviewed migrations, local configuration, and synthetic local
+Issue #7 adds the separately agreed
+[cancellation and cleanup policy](cancellation.md), including the two 408 codes
+below, without changing mutation atomicity or recovery contracts. Parent #1
+scopes reviewed migrations, local configuration, and synthetic local
 implementation/verification, not real collection, private producer integration,
 cloud provisioning, or deployment. Runtime evidence and source-rights/retention
 gates remain distinct from the normative requirements.
@@ -76,6 +79,9 @@ type, field correctness, or source rights.
   JSON objects. Reject unknown JSON fields throughout these objects.
 - Successful writes respond only after their atomic database operation commits.
   There is no asynchronous acceptance or delivery-status endpoint.
+- Body reading has an absolute 10-second deadline. Observed abort can prevent
+  write dispatch; after dispatch, cancellation does not imply rollback. See the
+  [phase-aware cancellation policy](cancellation.md).
 
 ## Full snapshot payload
 
@@ -341,6 +347,7 @@ withdrawal reasons, or underlying driver causes.
 | 401    | Missing/invalid bearer credentials (`UNAUTHORIZED`)                                                                    |
 | 403    | Known credential with wrong role (`FORBIDDEN`), or no approved source policy (`SOURCE_NOT_APPROVED`)                   |
 | 404    | Public missing/withdrawn application (`NOT_FOUND`)                                                                     |
+| 408    | Body-reading deadline (`BODY_READ_TIMEOUT`) or observed pre-dispatch/read abort with a receiver (`REQUEST_ABORTED`)    |
 | 409    | `SNAPSHOT_CONFLICT`, `PUBLICATION_WITHDRAWN`, or `PUBLICATION_GENERATION_MISMATCH`                                     |
 | 413    | Request body exceeds 32 KiB (`PAYLOAD_TOO_LARGE`)                                                                      |
 | 415    | Unsupported media type or encoding (`UNSUPPORTED_MEDIA_TYPE`)                                                          |

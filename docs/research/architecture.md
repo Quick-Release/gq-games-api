@@ -35,6 +35,12 @@ enters the Worker bundle. Alchemy alone owns migration application/history;
 Drizzle Kit only generates/checks SQL. See [database tooling](../database.md)
 and [development](../development.md).
 
+Catalog requests use the [phase-aware cancellation policy](../cancellation.md):
+10-second upload reading deadlines, cooperative read/pre-dispatch interruption,
+and no request-driven mutation interruption after native D1 dispatch. The same
+mutation execution promise is awaited and registered with `waitUntil`; this is
+bounded host lifetime opportunity, not durable execution or rollback.
+
 ## Consistency and recovery
 
 Acquisition initializes only absent control and preserves existing eligible
