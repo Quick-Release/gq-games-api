@@ -352,6 +352,11 @@ const catalogWorker = {
       let registryReads = 0;
       const db = new Proxy(env.DB, {
         get(target, property) {
+          if (property === 'batch' || property === 'exec')
+            return () => {
+              registryReads++;
+              throw new Error('Anonymous bulk SQL forbidden');
+            };
           if (property === 'prepare')
             return (query: string) => {
               if (query.includes('api_key_registry')) {
@@ -372,7 +377,13 @@ const catalogWorker = {
           ),
           request,
         ),
-        { ...env, CATALOG_ACCESS_MODE: 'anonymous', DB: db },
+        {
+          ...env,
+          CATALOG_ACCESS_MODE: url.searchParams.has('default')
+            ? undefined
+            : 'anonymous',
+          DB: db,
+        },
         ctx,
       );
       const result = new Response(response.body, response);

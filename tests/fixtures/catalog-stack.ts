@@ -30,6 +30,7 @@ export default Alchemy.Stack(
       ...apiConfig,
       env: {
         DB: db,
+        CATALOG_ACCESS_MODE: apiConfig.env.CATALOG_ACCESS_MODE,
         REGISTRY_BEARER_TOKEN: Config.Redacted('REGISTRY_BEARER_TOKEN'),
         APPROVED_SNAPSHOT_SOURCES: JSON.stringify([
           {

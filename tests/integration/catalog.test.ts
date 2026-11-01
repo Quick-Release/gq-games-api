@@ -316,7 +316,7 @@ it('persists generation-fenced snapshots and publication changes, serves only el
     }
   };
 
-  const withWorker = async <A>(run: () => Promise<A>) => {
+  const withWorker = async <A>(run: () => Promise<A>, mode = 'anonymous') => {
     // Allowlist the child environment instead of inheriting auth profiles,
     // source credentials, provider keys, or unrelated private configuration.
     const child = spawn(
@@ -354,6 +354,7 @@ it('persists generation-fenced snapshots and publication changes, serves only el
           INGESTION_BEARER_TOKEN: ingestion,
           PUBLICATION_ADMIN_BEARER_TOKEN: admin,
           REGISTRY_BEARER_TOKEN: registry,
+          CATALOG_ACCESS_MODE: mode,
         },
       },
     );
@@ -2762,10 +2763,18 @@ it('persists generation-fenced snapshots and publication changes, serves only el
           401,
           'UNAUTHORIZED',
         );
-        for (const authorization of [undefined, `Bearer ${customer}`]) {
-          const anonymous = await fetch(`${url}/fixture/anonymous/${id}`, {
-            headers: authorization ? { Authorization: authorization } : {},
-          });
+        for (const [authorization, suffix] of [
+          [undefined, ''],
+          [`Bearer ${customer}`, ''],
+          [undefined, '?default'],
+          [`Bearer ${customer}`, '?default'],
+        ] as const) {
+          const anonymous = await fetch(
+            `${url}/fixture/anonymous/${id}${suffix}`,
+            {
+              headers: authorization ? { Authorization: authorization } : {},
+            },
+          );
           expect(anonymous.status).toBe(200);
           expect(await anonymous.json()).toEqual({ data: expected });
           expect(anonymous.headers.get('X-Fixture-Registry-Reads')).toBe('0');
@@ -3443,6 +3452,88 @@ it('persists generation-fenced snapshots and publication changes, serves only el
       const audit = await json('/fixture/audit');
       expect(audit).toMatchObject({ history: [{ count: 4 }] });
     });
+    // Restart with the actual Alchemy access-mode binding. No fixture-path
+    // rewriting or per-request mode override participates in this sequence.
+    await withWorker(async () => {
+      const keyId = `bootstrap-${randomUUID()}`;
+      const secret = Array.from(randomBytes(32), (byte) =>
+        byte.toString(16).padStart(2, '0'),
+      ).join('');
+      secrets.push(secret);
+      const verifier = Array.from(
+        new Uint8Array(
+          await crypto.subtle.digest(
+            'SHA-256',
+            new TextEncoder().encode(secret),
+          ),
+        ),
+        (byte) => byte.toString(16).padStart(2, '0'),
+      ).join('');
+      const application = persisted.publicApplications[0]!;
+      const path = `/v1/steam/applications/${application.steam_app_id}`;
+      const request = async (
+        target: string,
+        method = 'GET',
+        token?: string,
+        body?: unknown,
+      ) => {
+        const response = await fetch(`${url}${target}`, {
+          method,
+          headers: {
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            'Content-Type': 'application/json',
+          },
+          ...(body ? { body: JSON.stringify(body) } : {}),
+          signal: AbortSignal.timeout(10_000),
+        });
+        const text = await response.text();
+        for (const value of secrets)
+          expect(text.includes(value), 'No secret in bootstrap response').toBe(
+            false,
+          );
+        return { response, body: JSON.parse(text) };
+      };
+      const rejected = async () => {
+        const { response, body } = await request(
+          path,
+          'GET',
+          `${keyId}.${secret}`,
+        );
+        expect(response.status).toBe(401);
+        expect(body).toEqual({
+          error: {
+            code: 'UNAUTHORIZED',
+            request_id: response.headers.get('X-Request-ID'),
+          },
+        });
+      };
+      expect((await request(path)).response.status).toBe(401);
+      expect(
+        (await request(`/v1/keys/${keyId}`, 'GET', registry)).response.status,
+      ).toBe(404);
+      expect(
+        (
+          await request(`/v1/keys/${keyId}`, 'PUT', registry, {
+            verifier,
+            tenant_id: 'synthetic-bootstrap',
+            scopes: ['catalog:read'],
+            expires_at: null,
+            revoked: false,
+          })
+        ).response.status,
+      ).toBe(200);
+      expect(
+        (await request(`/v1/keys/${keyId}`, 'GET', registry)).response.status,
+      ).toBe(200);
+      const read = await request(path, 'GET', `${keyId}.${secret}`);
+      expect(read.response.status).toBe(200);
+      expect(read.body).toEqual({ data: application });
+      expect(
+        (await request(`/v1/keys/${keyId}`, 'DELETE', registry)).response
+          .status,
+      ).toBe(200);
+      await rejected();
+    }, 'protected');
     await assertNoCredentialFiles();
   } finally {
     await rm(directory, { recursive: true, force: true });

@@ -134,30 +134,33 @@ it('checks each registry state through the production consumer route', async () 
   }
 });
 
-it('explicit anonymous mode ignores a broken registry even with a customer header', async () => {
-  const prepare = vi.fn(() => {
-    throw new Error('registry must not be read');
-  });
-  const app = createApp({
-    catalogLayer: Layer.succeed(Catalog, {
-      lookupApplication: () =>
-        Effect.fail(new CatalogFailure({ code: 'NOT_FOUND' })),
-      changePublication: () => Effect.die('unused'),
-      acquireAuthorization: () => Effect.die('unused'),
-      inspectPublication: () => Effect.die('unused'),
-      submitSnapshot: () => Effect.die('unused'),
-    }),
-  });
-  const response = await app.request(
-    'https://example.invalid/v1/steam/applications/1001',
-    {
-      headers: { Authorization: `Bearer synthetic.${'a'.repeat(64)}` },
-    },
-    { CATALOG_ACCESS_MODE: 'anonymous', DB: { prepare } },
-  );
-  expect(response.status).toBe(404);
-  expect(prepare).not.toHaveBeenCalled();
-});
+it.each([undefined, 'anonymous'])(
+  'anonymous mode %s ignores a broken registry even with a customer header',
+  async (mode) => {
+    const prepare = vi.fn(() => {
+      throw new Error('registry must not be read');
+    });
+    const app = createApp({
+      catalogLayer: Layer.succeed(Catalog, {
+        lookupApplication: () =>
+          Effect.fail(new CatalogFailure({ code: 'NOT_FOUND' })),
+        changePublication: () => Effect.die('unused'),
+        acquireAuthorization: () => Effect.die('unused'),
+        inspectPublication: () => Effect.die('unused'),
+        submitSnapshot: () => Effect.die('unused'),
+      }),
+    });
+    const response = await app.request(
+      'https://example.invalid/v1/steam/applications/1001',
+      {
+        headers: { Authorization: `Bearer synthetic.${'a'.repeat(64)}` },
+      },
+      { CATALOG_ACCESS_MODE: mode, DB: { prepare } },
+    );
+    expect(response.status).toBe(404);
+    expect(prepare).not.toHaveBeenCalled();
+  },
+);
 
 it('still cancels a catalog read after successful key verification', async () => {
   const secret = 'a'.repeat(64);

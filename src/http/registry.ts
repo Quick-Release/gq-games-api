@@ -50,15 +50,17 @@ export const mountRegistry = (
     if (!c.env?.DB) return catalogError(c, 503, 'SERVICE_UNAVAILABLE');
     const lifecycle = c.get('requestLifecycle');
     const result = await lifecycle.run(
-      manageRegistry(
-        keyId,
-        c.req.method === 'PUT'
-          ? 'upsert'
-          : c.req.method === 'DELETE'
-            ? 'revoke'
-            : 'inspect',
-        input,
-      ).pipe(Effect.provide(Database.layer(lifecycle.database(c.env.DB)))),
+      Effect.suspend(() =>
+        manageRegistry(
+          keyId,
+          c.req.method === 'PUT'
+            ? 'upsert'
+            : c.req.method === 'DELETE'
+              ? 'revoke'
+              : 'inspect',
+          input,
+        ).pipe(Effect.provide(Database.layer(lifecycle.database(c.env.DB)))),
+      ),
       c.req.method === 'GET' ? 'read' : 'mutation',
     );
     if (Exit.isSuccess(result)) return c.json({ data: result.value });

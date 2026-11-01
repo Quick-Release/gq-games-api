@@ -9,6 +9,9 @@ src/services/catalog.ts  Lookup/acquisition/publication/snapshot Effect service
 src/services/publication.ts Strict content-free publication command validation
 src/services/snapshot.ts Strict snapshot validation and synthetic source policy
 src/http/catalog.ts      Catalog transport, private authentication, and errors
+src/http/registry.ts     Dedicated registry management HTTP routes
+src/services/api-key.ts  Opaque customer-key parsing and verification
+src/services/registry.ts Registry validation and management Effects
 src/db/                 Drizzle schema and Effect-native D1 service
 src/env.ts              Type-only Alchemy binding inference
 src/index.ts             Cloudflare Worker entrypoint
@@ -19,6 +22,8 @@ scripts/build-worker.ts  Offline Alchemy source-provider build adapter
 scripts/preview-worker.ts Local-only preview of the built Worker
 vite.config.ts           Vite+ test, lint, format, and check settings
 tests/app.test.ts        Node unit tests of the HTTP boundary
+tests/protected-http.test.ts Protected-read HTTP policy and cancellation
+tests/registry-http.test.ts Registry credential and failure boundaries
 tests/tooling.test.ts    Tooling configuration regression tests
 tests/database.test.ts   Database service unit tests with a D1 stub
 tests/integration/       Real local workerd catalog + D1/Drizzle tests
