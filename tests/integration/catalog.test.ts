@@ -160,7 +160,8 @@ it('persists generation-fenced snapshots and publication changes, serves only el
   // Credentials exist only in this process and the fixture's process/bindings.
   const ingestion = `${randomUUID()}${randomUUID()}`;
   const admin = `${randomUUID()}${randomUUID()}`;
-  const secrets = [ingestion, admin];
+  const registry = `${randomUUID()}${randomUUID()}`;
+  const secrets = [ingestion, admin, registry];
 
   const json = async (path: string, init?: RequestInit) => {
     const response = await fetch(`${url}${path}`, {
@@ -352,6 +353,7 @@ it('persists generation-fenced snapshots and publication changes, serves only el
           CATALOG_TEST_MIGRATIONS: migrations,
           INGESTION_BEARER_TOKEN: ingestion,
           PUBLICATION_ADMIN_BEARER_TOKEN: admin,
+          REGISTRY_BEARER_TOKEN: registry,
         },
       },
     );
@@ -479,6 +481,84 @@ it('persists generation-fenced snapshots and publication changes, serves only el
     );
 
     const persisted = await withWorker(async () => {
+      const keyRequest = (method: string, body?: unknown, token = registry) =>
+        fetch(`${url}/v1/keys/synthetic-key`, {
+          method,
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        });
+      const record = {
+        verifier: '0'.repeat(64),
+        tenant_id: 'synthetic-tenant',
+        scopes: ['catalog:read'],
+        expires_at: null,
+        revoked: false,
+      };
+      const publicRecord = {
+        key_id: 'synthetic-key',
+        tenant_id: 'synthetic-tenant',
+        scopes: ['catalog:read'],
+        expires_at: null,
+        revoked: false,
+      };
+      expect((await keyRequest('PUT', record, ingestion)).status).toBe(401);
+      expect((await keyRequest('GET')).status).toBe(404);
+      for (let repeat = 0; repeat < 2; repeat++) {
+        const response = await keyRequest('PUT', record);
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({ data: publicRecord });
+      }
+      expect(await (await keyRequest('GET')).json()).toEqual({
+        data: publicRecord,
+      });
+      expect(
+        (
+          await keyRequest('PUT', {
+            ...record,
+            verifier: '1'.repeat(64),
+            tenant_id: 'synthetic-replacement',
+            scopes: [],
+            expires_at: 1900000000,
+          })
+        ).status,
+      ).toBe(200);
+      expect(await (await keyRequest('GET')).json()).toEqual({
+        data: {
+          ...publicRecord,
+          tenant_id: 'synthetic-replacement',
+          scopes: [],
+          expires_at: 1900000000,
+        },
+      });
+      expect((await keyRequest('DELETE')).status).toBe(200);
+      expect((await keyRequest('DELETE')).status).toBe(200);
+      expect(
+        (
+          await keyRequest('PUT', {
+            ...record,
+            secret: 'synthetic-placeholder',
+          })
+        ).status,
+      ).toBe(422);
+      expect(
+        (await keyRequest('PUT', { ...record, scopes: ['admin'] })).status,
+      ).toBe(422);
+      expect(
+        (await keyRequest('PUT', { ...record, expires_at: -1 })).status,
+      ).toBe(422);
+      expect(await (await keyRequest('GET')).json()).toEqual({
+        data: {
+          ...publicRecord,
+          tenant_id: 'synthetic-replacement',
+          scopes: [],
+          expires_at: 1900000000,
+          revoked: true,
+        },
+      });
+
       expect(await inspect(1001)).toEqual({
         steam_app_id: 1001,
         state: 'uninitialized',
@@ -3148,6 +3228,7 @@ it('persists generation-fenced snapshots and publication changes, serves only el
         tables: [
           { name: '__alchemy_migrations' },
           { name: '_cf_METADATA' }, // workerd's own D1 metadata, not catalog data
+          { name: 'api_key_registry' },
           { name: 'steam_application_publication' },
           { name: 'steam_application_snapshot' },
         ],
@@ -3157,7 +3238,7 @@ it('persists generation-fenced snapshots and publication changes, serves only el
           { name: 'generation', type: 'TEXT' },
           { name: 'generation_issued_at', type: 'INTEGER' },
         ],
-        history: [{ count: 3 }],
+        history: [{ count: 4 }],
       });
       return {
         lifecycle,
@@ -3244,7 +3325,7 @@ it('persists generation-fenced snapshots and publication changes, serves only el
         error: { code: 'PUBLICATION_WITHDRAWN' },
       });
       const audit = await json('/fixture/audit');
-      expect(audit).toMatchObject({ history: [{ count: 3 }] });
+      expect(audit).toMatchObject({ history: [{ count: 4 }] });
     });
     await assertNoCredentialFiles();
   } finally {

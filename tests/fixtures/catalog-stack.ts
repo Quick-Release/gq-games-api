@@ -30,6 +30,7 @@ export default Alchemy.Stack(
       ...apiConfig,
       env: {
         DB: db,
+        REGISTRY_BEARER_TOKEN: Config.Redacted('REGISTRY_BEARER_TOKEN'),
         APPROVED_SNAPSHOT_SOURCES: JSON.stringify([
           {
             source_url: 'https://catalog.example.invalid/apps/1001',

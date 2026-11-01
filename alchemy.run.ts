@@ -33,6 +33,9 @@ export const apiConfig = {
     PUBLICATION_ADMIN_BEARER_TOKEN: Config.Redacted(
       'PUBLICATION_ADMIN_BEARER_TOKEN',
     ).pipe(Config.withDefault(Redacted.make(''))),
+    REGISTRY_BEARER_TOKEN: Config.Redacted('REGISTRY_BEARER_TOKEN').pipe(
+      Config.withDefault(Redacted.make('')),
+    ),
     // Exact synthetic URL/extractor pairs; empty configuration approves nothing.
     // This is an enforcement policy, not source-rights approval.
     APPROVED_SNAPSHOT_SOURCES: Config.String('APPROVED_SNAPSHOT_SOURCES').pipe(
@@ -112,7 +115,12 @@ export const publicationState = Layer.unwrap(
     if ((yield* AlchemyContext).dev) return localPublicationState;
     const ingestion = yield* apiConfig.env.INGESTION_BEARER_TOKEN;
     const admin = yield* apiConfig.env.PUBLICATION_ADMIN_BEARER_TOKEN;
-    if (Redacted.value(ingestion) || Redacted.value(admin)) {
+    const registry = yield* apiConfig.env.REGISTRY_BEARER_TOKEN;
+    if (
+      Redacted.value(ingestion) ||
+      Redacted.value(admin) ||
+      Redacted.value(registry)
+    ) {
       return yield* Effect.die(
         'Configured publication secrets require an approved protected deployment state store. This capability is local-only.',
       );

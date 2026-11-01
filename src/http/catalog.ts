@@ -170,7 +170,7 @@ const rejectBody = async (c: Context<CatalogHttpEnv>) => {
 
 // Never trust Content-Length to establish either size or completeness. Decode
 // only after collecting at most the actual 32 KiB limit, rejecting invalid UTF-8.
-const readJsonBody = async (c: Context<CatalogHttpEnv>) => {
+export const readJsonBody = async (c: Context<CatalogHttpEnv>) => {
   const media = c.req.header('Content-Type') ?? '';
   const encoding = c.req.header('Content-Encoding');
   if (
@@ -290,7 +290,7 @@ const runCatalog = async <A>(
   return catalogError(c, 500, 'INTERNAL_SERVER_ERROR');
 };
 
-export const mountCatalog = (
+export const mountApiTransport = (
   app: Hono<CatalogHttpEnv>,
   options: CatalogHttpOptions,
 ) => {
@@ -329,11 +329,16 @@ export const mountCatalog = (
       lifecycle.dispose();
     }
   };
-  for (const path of [prefix, publicPrefix]) {
+  for (const path of [prefix, publicPrefix, '/v1/keys']) {
     app.use(path, transport);
     app.use(`${path}/*`, transport);
   }
+};
 
+export const mountCatalog = (
+  app: Hono<CatalogHttpEnv>,
+  options: CatalogHttpOptions,
+) => {
   app.get(`${publicPrefix}/:steamAppId`, async (c) => {
     const denied = requireHttps(c, options);
     if (denied) return denied;
