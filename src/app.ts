@@ -11,6 +11,7 @@ import {
   type CatalogHttpOptions,
 } from './http/catalog';
 import { getHealth } from './services/health';
+import { RequestStopped } from './http/request-lifecycle';
 
 export const createApp = (options: CatalogHttpOptions = {}) => {
   const app = new Hono<CatalogHttpEnv>();
@@ -32,7 +33,10 @@ export const createApp = (options: CatalogHttpOptions = {}) => {
       ? catalogError(c, 404, 'NOT_FOUND')
       : c.json({ error: { code: 'NOT_FOUND' } }, 404),
   );
-  app.onError((_error, c) => {
+  app.onError((error, c) => {
+    if (error instanceof RequestStopped && c.get('catalogRequestId')) {
+      return catalogError(c, 408, error.code);
+    }
     console.error('Unhandled API error');
     return c.get('catalogRequestId')
       ? catalogError(c, 500, 'INTERNAL_SERVER_ERROR')

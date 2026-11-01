@@ -7,14 +7,24 @@ import type { Context, Hono } from 'hono';
 import { Database } from '../db/database';
 import type { WorkerEnv } from '../env';
 import { Catalog, CatalogFailure } from '../services/catalog';
+import {
+  createRequestLifecycle,
+  RequestStopped,
+  type RequestLifecycleEvent,
+} from './request-lifecycle';
 
 export type CatalogHttpEnv = {
   Bindings: WorkerEnv;
-  Variables: { catalogRequestId: string };
+  Variables: {
+    catalogRequestId: string;
+    requestLifecycle: ReturnType<typeof createRequestLifecycle>;
+  };
 };
 
 export type CatalogHttpOptions = {
   catalogLayer?: Layer.Layer<Catalog>;
+  observeLifecycle?: (event: RequestLifecycleEvent) => void;
+  beforeMutation?: Effect.Effect<void>;
   // Code-only test seam. Never derive this from a Worker binding or environment.
   allowInsecureLocalTest?: boolean;
 };
@@ -23,8 +33,21 @@ const prefix = '/internal/v1/steam/applications';
 const publicPrefix = '/v1/steam/applications';
 const maximumBodyBytes = 32 * 1024;
 
-type ErrorStatus = 400 | 401 | 403 | 404 | 409 | 413 | 415 | 422 | 500 | 503;
+type ErrorStatus =
+  | 400
+  | 401
+  | 403
+  | 404
+  | 408
+  | 409
+  | 413
+  | 415
+  | 422
+  | 500
+  | 503;
 type ErrorCode =
+  | 'REQUEST_ABORTED'
+  | 'BODY_READ_TIMEOUT'
   | 'INVALID_APP_ID'
   | 'UNAUTHORIZED'
   | 'FORBIDDEN'
@@ -123,11 +146,13 @@ const rejectBody = async (c: Context<CatalogHttpEnv>) => {
   }
   const reader = c.req.raw.body?.getReader();
   if (!reader) return;
+  const lifecycle = c.get('requestLifecycle');
+  lifecycle.readerAcquired();
 
   try {
     // No JSON parsing or full buffering: stop at the first nonempty chunk.
     while (true) {
-      const { done, value } = await reader.read();
+      const { done, value } = await lifecycle.readBody(() => reader.read());
       if (done) return;
       if (value.byteLength === 0) continue;
       if (value.byteLength > maximumBodyBytes) {
@@ -139,6 +164,7 @@ const rejectBody = async (c: Context<CatalogHttpEnv>) => {
     }
   } finally {
     releaseBodyReader(reader);
+    lifecycle.readerReleased();
   }
 };
 
@@ -177,9 +203,11 @@ const readJsonBody = async (c: Context<CatalogHttpEnv>) => {
       ? () => reader.read()
       : undefined;
   if (read) {
+    const lifecycle = c.get('requestLifecycle');
+    lifecycle.readerAcquired();
     try {
       while (true) {
-        const { done, value } = await read();
+        const { done, value } = await lifecycle.readBody(read);
         if (done) break;
         length += value.byteLength;
         if (length > maximumBodyBytes) {
@@ -190,6 +218,7 @@ const readJsonBody = async (c: Context<CatalogHttpEnv>) => {
     } finally {
       if (byob) releaseBodyReader(byob);
       if (reader) releaseBodyReader(reader);
+      lifecycle.readerReleased();
     }
   }
   const bytes = new Uint8Array(length);
@@ -220,12 +249,24 @@ const runCatalog = async <A>(
   }
   const layer =
     options.catalogLayer ??
-    Catalog.layer.pipe(Layer.provide(Database.layer(c.env.DB)));
-  const exit = await Effect.runPromiseExit(
-    operation.pipe(Effect.provide(layer)),
-  );
+    Catalog.layer.pipe(
+      Layer.provide(
+        Database.layer(c.get('requestLifecycle').database(c.env.DB)),
+      ),
+    );
+  const policy = c.req.method === 'GET' ? 'read' : 'mutation';
+  const exit = await c
+    .get('requestLifecycle')
+    .run(
+      operation.pipe(Effect.provide(layer)),
+      policy,
+      policy === 'mutation' ? options.beforeMutation : undefined,
+    );
   if (Exit.isSuccess(exit)) return c.json({ data: exit.value });
 
+  if (Cause.hasInterruptsOnly(exit.cause) && c.req.raw.signal.aborted) {
+    return catalogError(c, 408, 'REQUEST_ABORTED');
+  }
   const failure = Cause.findErrorOption(exit.cause);
   if (Option.isSome(failure) && failure.value instanceof CatalogFailure) {
     switch (failure.value.code) {
@@ -261,7 +302,32 @@ export const mountCatalog = (
     c.set('catalogRequestId', requestId);
     c.header('X-Request-ID', requestId);
     c.header('Cache-Control', 'no-store');
-    await next();
+    const lifecycle = createRequestLifecycle({
+      signal: c.req.raw.signal,
+      requestId,
+      observe: options.observeLifecycle,
+      // Hono's in-process test adapter has no ExecutionContext.
+      waitUntil: (promise) => {
+        let context;
+        try {
+          context = c.executionCtx;
+        } catch {
+          return;
+        }
+        context.waitUntil(promise);
+      },
+    });
+    c.set('requestLifecycle', lifecycle);
+    try {
+      lifecycle.check();
+      await next();
+    } catch (error) {
+      if (error instanceof RequestStopped)
+        return catalogError(c, 408, error.code);
+      throw error;
+    } finally {
+      lifecycle.dispose();
+    }
   };
   for (const path of [prefix, publicPrefix]) {
     app.use(path, transport);
