@@ -30,6 +30,9 @@ tests/integration/       Real local workerd catalog + D1/Drizzle tests
   catalog-lifecycle.ts    Composed HTTP acceptance inside catalog.test.ts
 tests/fixtures/http-gates.ts Local-only real D1 batch/read coordination
 docs/catalog-acceptance.md Parent HTTP/D1 category-to-test matrix
+docs/verification-registry.md Registry records, key format, and access modes
+docs/self-host-bootstrap.md Copyable protected-mode bootstrap sequence
+docs/protected-access-acceptance.md Protected-access evidence and its limits
 docs/research/           Implementation status, research, and remaining gates
 ```
 
@@ -175,13 +178,14 @@ local emulation only, not cloud resource management or migration execution.
 Restart reuses D1 identity and storage without replaying migrations.
 
 For non-dev commands the original credential-free scaffold retains
-`localState()`. Any configured publication secret blocks the ordinary stack
-before resource reconciliation: pinned Alchemy persists even `Redacted` values
-in plaintext JSON state. A secret-bearing deployment requires a separately
-approved protected state store, migration/recovery plan, and credential rollout.
-No cloud state bootstrap, encryption adapter, or CI deployment has been added.
-Protect existing state; deleting it or deploying from a fresh checkout can
-orphan resources or break reconciliation.
+`localState()`. Any configured publication secret — ingestion, publication
+admin, or registry — blocks the ordinary stack before resource reconciliation:
+pinned Alchemy persists even `Redacted` values in plaintext JSON state. A
+secret-bearing deployment requires a separately approved protected state store,
+migration/recovery plan, and credential rollout. No cloud state bootstrap,
+encryption adapter, or CI deployment has been added. Protect existing state;
+deleting it or deploying from a fresh checkout can orphan resources or break
+reconciliation.
 
 A future `Cloudflare.state()` backend can bootstrap real state infrastructure,
 even during commands people expect to be read-only or local. Do not add

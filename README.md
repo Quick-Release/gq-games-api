@@ -59,6 +59,9 @@ Implemented routes:
 | GET    | `/internal/v1/steam/applications/{steamAppId}/publication`             | Admin-role inspection, including absent control              |
 | PUT    | `/internal/v1/steam/applications/{steamAppId}/snapshot`                | Ingestion-role atomic complete-snapshot submission           |
 | PUT    | `/internal/v1/steam/applications/{steamAppId}/publication`             | Admin-role generation-checked withdrawal/reinstatement       |
+| PUT    | `/v1/keys/{keyId}`                                                     | Registry-credential upsert of a full API key record          |
+| GET    | `/v1/keys/{keyId}`                                                     | Registry-credential inspection of an API key record          |
+| DELETE | `/v1/keys/{keyId}`                                                     | Registry-credential revocation of an API key record          |
 
 Consumer reads can require customer API keys with
 `CATALOG_ACCESS_MODE=protected`. See

@@ -51,6 +51,9 @@ IDs inside JSON are numbers in the same range, not strings.
 | `POST /internal/v1/steam/applications/{steamAppId}/ingestion-authorization` | Ingestion                                                | Obtain the current publication generation before collection |
 | `GET /internal/v1/steam/applications/{steamAppId}/publication`              | Publication admin                                        | Inspect publication control, including uninitialized state  |
 | `PUT /internal/v1/steam/applications/{steamAppId}/publication`              | Publication admin                                        | Generation-checked withdrawal or eligibility transition     |
+| `PUT /v1/keys/{keyId}`                                                      | Registry credential                                      | Idempotent upsert of a complete API key record              |
+| `GET /v1/keys/{keyId}`                                                      | Registry credential                                      | Inspect an API key record, without secret or verifier       |
+| `DELETE /v1/keys/{keyId}`                                                   | Registry credential                                      | Revoke an API key record                                    |
 
 Consumer authorization defaults to anonymous. Set
 `CATALOG_ACCESS_MODE=protected` to require a valid customer key with
