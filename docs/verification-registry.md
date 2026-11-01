@@ -55,9 +55,10 @@ time, and returns a Principal with tenant and scopes. No Principal data appears
 in catalog responses. Missing, malformed, unknown, incorrect, expired, and
 revoked credentials all return the same sanitized 401 envelope. Expiry is
 exclusive: a key expires when the current Unix second is at least `expires_at`.
-A verified key without `catalog:read` returns 403. Registry failures return 503;
-no protected catalog read runs after verification failure. Responses retain
-request correlation and `Cache-Control: no-store`.
+A verified key without `catalog:read` returns the same 401. Corrupt verifier
+values also receive that rejection. Registry failures return 503; no protected
+catalog read runs after verification failure. Responses retain request
+correlation and `Cache-Control: no-store`.
 
 There is no application cache or deliberate revocation grace period: each next
 request checks its registry read. This does not establish hosted D1 consistency

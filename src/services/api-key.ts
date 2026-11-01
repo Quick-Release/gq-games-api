@@ -7,37 +7,58 @@ import { eq } from 'drizzle-orm';
 import { Clock, Effect } from 'effect';
 import { Database } from '../db/database';
 import { apiKeyRegistry } from '../db/schema';
+import { registryId } from './registry';
 
 export type Principal = {
   tenant_id: string;
   scopes: readonly 'catalog:read'[];
 };
 
-export const apiKeyPattern = /^Bearer ([A-Za-z0-9_-]{1,128})\.([0-9a-f]{64})$/i;
+// Parsing is independent of D1 so malformed input never needs a registry read.
+export const parseApiKey = (authorization: string | undefined) => {
+  const bearer = authorization?.match(/^Bearer ([^\s]+)$/i)?.[1];
+  if (!bearer) return null;
+  const [keyId, secret, extra] = bearer.split('.');
+  if (
+    !keyId ||
+    !registryId.test(keyId) ||
+    !secret ||
+    !/^[0-9a-f]{64}$/i.test(secret) ||
+    extra !== undefined
+  )
+    return null;
+  return { keyId, secret };
+};
 
-// Null is the same rejection for malformed, unknown, expired and revoked keys.
+// Null rejects unknown, corrupt, expired and revoked registry records alike.
 // Route policy (including required scopes) belongs to the HTTP layer.
-export const verifyApiKey = (authorization: string | undefined) =>
+export const verifyApiKey = (
+  credential: NonNullable<ReturnType<typeof parseApiKey>>,
+) =>
   Effect.gen(function* () {
-    const parts = authorization?.match(apiKeyPattern);
-    if (!parts) return null;
     const db = yield* Database;
     const rows = yield* db
       .select()
       .from(apiKeyRegistry)
-      .where(eq(apiKeyRegistry.keyId, parts[1]!));
+      .where(eq(apiKeyRegistry.keyId, credential.keyId));
     const row = rows[0];
     const digest = yield* Effect.promise(() =>
-      crypto.subtle.digest('SHA-256', new TextEncoder().encode(parts[2]!)),
+      crypto.subtle.digest(
+        'SHA-256',
+        new TextEncoder().encode(credential.secret),
+      ),
     );
     // Always compare equal-length digests, including for an unknown identifier.
+    const validVerifier =
+      typeof row?.verifier === 'string' && /^[0-9a-f]{64}$/.test(row.verifier);
     const expected = Uint8Array.from(
-      (row?.verifier ?? '0'.repeat(64)).match(/../g)!,
+      (validVerifier ? row.verifier : '0'.repeat(64)).match(/../g)!,
       (byte) => Number.parseInt(byte, 16),
     );
     const matches = timingSafeEqual(new Uint8Array(digest), expected);
     const now = yield* Clock.currentTimeMillis;
     if (
+      !validVerifier ||
       !matches ||
       !row ||
       row.revoked ||

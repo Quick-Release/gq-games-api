@@ -560,11 +560,7 @@ it('persists generation-fenced snapshots and publication changes, serves only el
           (await keyRequest('PUT', { ...record, verifier, ...mutation }))
             .status,
         ).toBe(200);
-        await rejection(
-          await protectedRead(),
-          'scopes' in mutation ? 403 : 401,
-          'scopes' in mutation ? 'FORBIDDEN' : 'UNAUTHORIZED',
-        );
+        await rejection(await protectedRead(), 401, 'UNAUTHORIZED');
       }
       expect((await keyRequest('PUT', { ...record, verifier })).status).toBe(
         200,

@@ -4,12 +4,12 @@
 
 **Agreed design; synthetic local implementation under parent #1 and issues
 #2–#6.** Authorization acquisition POST, publication inspection GET, complete
-snapshot PUT, anonymous public lookup GET, and generation-checked publication
-PUT exist, backed by separate durable control/snapshot tables. `/` and
-process-only `/health` are preserved; health is not storage/crawler readiness.
-Issue #6 adds composed HTTP lifecycle/recovery acceptance inside the existing
-local workerd fixture. All required local quality commands passed; see the
-[acceptance matrix](catalog-acceptance.md) for the recorded run, commands,
+snapshot PUT, public lookup GET (anonymous by default), and generation-checked
+publication PUT exist, backed by separate durable control/snapshot tables. `/`
+and process-only `/health` are preserved; health is not storage/crawler
+readiness. Issue #6 adds composed HTTP lifecycle/recovery acceptance inside the
+existing local workerd fixture. All required local quality commands passed; see
+the [acceptance matrix](catalog-acceptance.md) for the recorded run, commands,
 actual test sections, and evidence limits.
 
 This contract records the HTTP, payload, and atomic-persistence decisions
@@ -44,13 +44,19 @@ Each `{steamAppId}` is a canonical decimal integer from `1` to `4294967295`,
 without signs, whitespace, leading zeroes, or alternative numeric notation. App
 IDs inside JSON are numbers in the same range, not strings.
 
-| Method and route                                                            | Authorization     | Purpose                                                     |
-| --------------------------------------------------------------------------- | ----------------- | ----------------------------------------------------------- |
-| `GET /v1/steam/applications/{steamAppId}`                                   | Anonymous         | Last-known approved application snapshot                    |
-| `PUT /internal/v1/steam/applications/{steamAppId}/snapshot`                 | Ingestion         | One complete snapshot, synchronous persistence outcome      |
-| `POST /internal/v1/steam/applications/{steamAppId}/ingestion-authorization` | Ingestion         | Obtain the current publication generation before collection |
-| `GET /internal/v1/steam/applications/{steamAppId}/publication`              | Publication admin | Inspect publication control, including uninitialized state  |
-| `PUT /internal/v1/steam/applications/{steamAppId}/publication`              | Publication admin | Generation-checked withdrawal or eligibility transition     |
+| Method and route                                                            | Authorization                                            | Purpose                                                     |
+| --------------------------------------------------------------------------- | -------------------------------------------------------- | ----------------------------------------------------------- |
+| `GET /v1/steam/applications/{steamAppId}`                                   | Anonymous by default; customer API key in protected mode | Last-known approved application snapshot                    |
+| `PUT /internal/v1/steam/applications/{steamAppId}/snapshot`                 | Ingestion                                                | One complete snapshot, synchronous persistence outcome      |
+| `POST /internal/v1/steam/applications/{steamAppId}/ingestion-authorization` | Ingestion                                                | Obtain the current publication generation before collection |
+| `GET /internal/v1/steam/applications/{steamAppId}/publication`              | Publication admin                                        | Inspect publication control, including uninitialized state  |
+| `PUT /internal/v1/steam/applications/{steamAppId}/publication`              | Publication admin                                        | Generation-checked withdrawal or eligibility transition     |
+
+Consumer authorization defaults to anonymous. Set
+`CATALOG_ACCESS_MODE=protected` to require a valid customer key with
+`catalog:read`; all credential rejections, including insufficient scope, return
+the same sanitized 401. Registry failures return 503. See
+[verification and access modes](verification-registry.md#protected-catalog-reads).
 
 The `/internal` prefix provides no protection by itself. Private routes require
 `Authorization: Bearer <credential>`. Use separate, independently rotatable

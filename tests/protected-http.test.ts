@@ -26,6 +26,9 @@ it('rejects malformed credentials and fails closed for registry outages', async 
   for (const [credential, status] of [
     ['Basic anything', 401],
     ['Bearer bad', 401],
+    [`Bearer synthetic.${'a'.repeat(64)}.extra`, 401],
+    [`Bearer invalid!.${'a'.repeat(64)}`, 401],
+    [`Bearer ${'x'.repeat(129)}.${'a'.repeat(64)}`, 401],
     [`Bearer synthetic.${'a'.repeat(64)}`, 503],
   ] as const) {
     const response = await createApp().request(
@@ -58,7 +61,11 @@ it('checks each registry state through the production consumer route', async () 
     ['wrong-secret', 401],
     ['expired', 401],
     ['revoked', 401],
-    ['wrong-scope', 403],
+    ['wrong-scope', 401],
+    ['corrupt-empty', 401],
+    ['corrupt-short', 401],
+    ['corrupt-odd', 401],
+    ['corrupt-hex', 401],
     ['outage', 503],
   ] as const) {
     const raw = vi.fn(async () => {
@@ -68,7 +75,15 @@ it('checks each registry state through the production consumer route', async () 
         : [
             [
               'synthetic',
-              verifier,
+              state === 'corrupt-empty'
+                ? ''
+                : state === 'corrupt-short'
+                  ? 'abcd'
+                  : state === 'corrupt-odd'
+                    ? 'a'.repeat(63)
+                    : state === 'corrupt-hex'
+                      ? 'z'.repeat(64)
+                      : verifier,
               'tenant',
               state === 'wrong-scope' ? '[]' : '["catalog:read"]',
               state === 'expired' ? 0 : null,
@@ -110,11 +125,9 @@ it('checks each registry state through the production consumer route', async () 
         code:
           status === 404
             ? 'NOT_FOUND'
-            : status === 403
-              ? 'FORBIDDEN'
-              : status === 503
-                ? 'SERVICE_UNAVAILABLE'
-                : 'UNAUTHORIZED',
+            : status === 503
+              ? 'SERVICE_UNAVAILABLE'
+              : 'UNAUTHORIZED',
         request_id: response.headers.get('X-Request-ID'),
       },
     });
@@ -202,3 +215,41 @@ it('still cancels a catalog read after successful key verification', async () =>
     },
   });
 });
+
+it.each([{}, { prepare: 'invalid' }, { prepare: () => ({}) }])(
+  'maps malformed DB bindings to sanitized 503: %o',
+  async (db) => {
+    const response = await createApp().request(
+      'https://example.invalid/v1/steam/applications/1001',
+      {
+        headers: { Authorization: `Bearer synthetic.${'a'.repeat(64)}` },
+      },
+      { CATALOG_ACCESS_MODE: 'protected', DB: db },
+    );
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({
+      error: {
+        code: 'SERVICE_UNAVAILABLE',
+        request_id: response.headers.get('X-Request-ID'),
+      },
+    });
+  },
+);
+
+it.each(['', 'unknown', 'PROTECTED', ' protected', 'anonymous '])(
+  'fails closed for invalid access mode %j',
+  async (mode) => {
+    const response = await createApp().request(
+      'https://example.invalid/v1/steam/applications/1001',
+      undefined,
+      { CATALOG_ACCESS_MODE: mode },
+    );
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({
+      error: {
+        code: 'SERVICE_UNAVAILABLE',
+        request_id: response.headers.get('X-Request-ID'),
+      },
+    });
+  },
+);
