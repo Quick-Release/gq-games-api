@@ -61,6 +61,16 @@ Cloudflare binding/atomicity behavior.
   obligations, and what contributor rights are needed for any future alternative
   commercial code license? Keep source-data/private-component rights separate.
 
+## Proposed consumer requirements
+
+A planned private read-only consumer, `gq-poirot`, surfaces requirements that
+the current contract excludes. These include lookup by game name, canonical
+cross-platform Game identities, and non-Steam games. Release status and date are
+the first question type, and whether news belongs here at all is open. The
+no-store and no-request-path-fetch constraints remain. These are proposals, not
+contract changes. See
+[conversational consumer requirements](conversational-consumer-requirements.md).
+
 ## Preserved scope and limits
 
 Use the [glossary](../../GLOSSARY.md): a Steam Application is not a canonical
