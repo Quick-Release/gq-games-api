@@ -4,14 +4,14 @@ Research-first games API for the Cloudflare ecosystem, built with **Alchemy,
 Effect, Hono, Drizzle, and Vite+**.
 
 **Status: research + synthetic catalog lookup/ingestion/publication control.**
-The repository implements process health, anonymous last-known snapshot lookup,
-complete snapshot submission, publication authorization acquisition, and admin
-inspection/withdrawal/reinstatement on local D1. Issue #6 adds composed HTTP
-lifecycle/recovery acceptance, verified in isolated local workerd. See the
-[acceptance matrix](docs/catalog-acceptance.md) for reproducible test sections,
-completed quality commands, and evidence limits. No cloud resources have been
-provisioned or service deployed. `gq-crawl` integration and real-source approval
-remain out of scope.
+The repository implements process health, last-known snapshot lookup (anonymous
+by default), complete snapshot submission, publication authorization
+acquisition, and admin inspection/withdrawal/reinstatement on local D1. Issue #6
+adds composed HTTP lifecycle/recovery acceptance, verified in isolated local
+workerd. See the [acceptance matrix](docs/catalog-acceptance.md) for
+reproducible test sections, completed quality commands, and evidence limits. No
+cloud resources have been provisioned or service deployed. `gq-crawl`
+integration and real-source approval remain out of scope.
 
 ## Direction
 
@@ -54,11 +54,19 @@ Implemented routes:
 | ------ | ---------------------------------------------------------------------- | ------------------------------------------------------------ |
 | GET    | `/`                                                                    | Scaffold metadata                                            |
 | GET    | `/health`                                                              | Process health through an Effect service                     |
-| GET    | `/v1/steam/applications/{steamAppId}`                                  | Anonymous last-known approved English snapshot               |
+| GET    | `/v1/steam/applications/{steamAppId}`                                  | Last-known approved English snapshot; anonymous by default   |
 | POST   | `/internal/v1/steam/applications/{steamAppId}/ingestion-authorization` | Ingestion-role acquisition of current publication generation |
 | GET    | `/internal/v1/steam/applications/{steamAppId}/publication`             | Admin-role inspection, including absent control              |
 | PUT    | `/internal/v1/steam/applications/{steamAppId}/snapshot`                | Ingestion-role atomic complete-snapshot submission           |
 | PUT    | `/internal/v1/steam/applications/{steamAppId}/publication`             | Admin-role generation-checked withdrawal/reinstatement       |
+| PUT    | `/v1/keys/{keyId}`                                                     | Registry-credential upsert of a full API key record          |
+| GET    | `/v1/keys/{keyId}`                                                     | Registry-credential inspection of an API key record          |
+| DELETE | `/v1/keys/{keyId}`                                                     | Registry-credential revocation of an API key record          |
+
+Consumer reads can require customer API keys with
+`CATALOG_ACCESS_MODE=protected`. See
+[verification and access modes](docs/verification-registry.md#protected-catalog-reads)
+for the credential format and rejection behavior.
 
 Acquisition atomically initializes only absent control, preserves existing
 eligible generation/timestamp, and refuses withdrawal. Inspection does not

@@ -3,7 +3,7 @@
 // See LICENSE in the repository root.
 
 import { execFile, spawn } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { cp, mkdir, mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -160,7 +160,8 @@ it('persists generation-fenced snapshots and publication changes, serves only el
   // Credentials exist only in this process and the fixture's process/bindings.
   const ingestion = `${randomUUID()}${randomUUID()}`;
   const admin = `${randomUUID()}${randomUUID()}`;
-  const secrets = [ingestion, admin];
+  const registry = `${randomUUID()}${randomUUID()}`;
+  const secrets = [ingestion, admin, registry];
 
   const json = async (path: string, init?: RequestInit) => {
     const response = await fetch(`${url}${path}`, {
@@ -315,7 +316,7 @@ it('persists generation-fenced snapshots and publication changes, serves only el
     }
   };
 
-  const withWorker = async <A>(run: () => Promise<A>) => {
+  const withWorker = async <A>(run: () => Promise<A>, mode = 'anonymous') => {
     // Allowlist the child environment instead of inheriting auth profiles,
     // source credentials, provider keys, or unrelated private configuration.
     const child = spawn(
@@ -352,6 +353,8 @@ it('persists generation-fenced snapshots and publication changes, serves only el
           CATALOG_TEST_MIGRATIONS: migrations,
           INGESTION_BEARER_TOKEN: ingestion,
           PUBLICATION_ADMIN_BEARER_TOKEN: admin,
+          REGISTRY_BEARER_TOKEN: registry,
+          CATALOG_ACCESS_MODE: mode,
         },
       },
     );
@@ -479,6 +482,174 @@ it('persists generation-fenced snapshots and publication changes, serves only el
     );
 
     const persisted = await withWorker(async () => {
+      const keyRequest = (method: string, body?: unknown, token = registry) =>
+        fetch(`${url}/v1/keys/synthetic-key`, {
+          method,
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        });
+      const record = {
+        verifier: '0'.repeat(64),
+        tenant_id: 'synthetic-tenant',
+        scopes: ['catalog:read'],
+        expires_at: null,
+        revoked: false,
+      };
+      expect((await keyRequest('GET')).status).toBe(404);
+      const secret = Array.from(randomBytes(32), (byte) =>
+        byte.toString(16).padStart(2, '0'),
+      ).join('');
+      secrets.push(secret);
+      const digest = await crypto.subtle.digest(
+        'SHA-256',
+        new TextEncoder().encode(secret),
+      );
+      const verifier = Array.from(new Uint8Array(digest), (byte) =>
+        byte.toString(16).padStart(2, '0'),
+      ).join('');
+      const customer = `synthetic-key.${secret}`;
+      const protectedRead = (
+        credential: string | undefined = customer,
+        outage = false,
+      ) =>
+        fetch(`${url}/fixture/protected/4294967295${outage ? '?outage' : ''}`, {
+          headers: credential ? { Authorization: `Bearer ${credential}` } : {},
+        });
+      const rejection = async (
+        response: Response,
+        status: number,
+        code: string,
+      ) => {
+        expect(response.status).toBe(status);
+        expect(response.headers.get('Cache-Control')).toBe('no-store');
+        expect(await response.json()).toEqual({
+          error: {
+            code,
+            request_id: response.headers.get('X-Request-ID'),
+          },
+        });
+      };
+      // Exercise the production verifier, registry writes, and catalog lookup in workerd.
+      await rejection(await protectedRead(''), 401, 'UNAUTHORIZED');
+      await rejection(await protectedRead('malformed'), 401, 'UNAUTHORIZED');
+      await rejection(await protectedRead(), 401, 'UNAUTHORIZED');
+      expect((await keyRequest('PUT', { ...record, verifier })).status).toBe(
+        200,
+      );
+      await rejection(await protectedRead(), 404, 'NOT_FOUND');
+      await rejection(
+        await protectedRead(`synthetic-key.${'b'.repeat(64)}`),
+        401,
+        'UNAUTHORIZED',
+      );
+      await rejection(
+        await protectedRead(`unknown.${secret}`),
+        401,
+        'UNAUTHORIZED',
+      );
+      await rejection(
+        await protectedRead(customer, true),
+        503,
+        'SERVICE_UNAVAILABLE',
+      );
+      for (const mutation of [
+        { expires_at: 0 },
+        { revoked: true },
+        { scopes: [] },
+      ]) {
+        expect(
+          (await keyRequest('PUT', { ...record, verifier, ...mutation }))
+            .status,
+        ).toBe(200);
+        await rejection(await protectedRead(), 401, 'UNAUTHORIZED');
+      }
+      expect((await keyRequest('PUT', { ...record, verifier })).status).toBe(
+        200,
+      );
+      for (const [path, method] of [
+        ['ingestion-authorization', 'POST'],
+        ['snapshot', 'PUT'],
+        ['publication', 'PUT'],
+        ['publication', 'GET'],
+      ]) {
+        expect(
+          (
+            await fetch(`${url}/internal/v1/steam/applications/1001/${path}`, {
+              method,
+              headers: { Authorization: `Bearer ${customer}` },
+            })
+          ).status,
+        ).toBe(401);
+      }
+      expect((await keyRequest('GET', undefined, customer)).status).toBe(401);
+      expect((await keyRequest('DELETE')).status).toBe(200);
+      await rejection(await protectedRead(), 401, 'UNAUTHORIZED');
+      // Restore the initial state for the existing management contract assertions.
+      expect((await keyRequest('PUT', record)).status).toBe(200);
+      const publicRecord = {
+        key_id: 'synthetic-key',
+        tenant_id: 'synthetic-tenant',
+        scopes: ['catalog:read'],
+        expires_at: null,
+        revoked: false,
+      };
+      expect((await keyRequest('PUT', record, ingestion)).status).toBe(401);
+      for (let repeat = 0; repeat < 2; repeat++) {
+        const response = await keyRequest('PUT', record);
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({ data: publicRecord });
+      }
+      expect(await (await keyRequest('GET')).json()).toEqual({
+        data: publicRecord,
+      });
+      expect(
+        (
+          await keyRequest('PUT', {
+            ...record,
+            verifier: '1'.repeat(64),
+            tenant_id: 'synthetic-replacement',
+            scopes: [],
+            expires_at: 1900000000,
+          })
+        ).status,
+      ).toBe(200);
+      expect(await (await keyRequest('GET')).json()).toEqual({
+        data: {
+          ...publicRecord,
+          tenant_id: 'synthetic-replacement',
+          scopes: [],
+          expires_at: 1900000000,
+        },
+      });
+      expect((await keyRequest('DELETE')).status).toBe(200);
+      expect((await keyRequest('DELETE')).status).toBe(200);
+      expect(
+        (
+          await keyRequest('PUT', {
+            ...record,
+            secret: 'synthetic-placeholder',
+          })
+        ).status,
+      ).toBe(422);
+      expect(
+        (await keyRequest('PUT', { ...record, scopes: ['admin'] })).status,
+      ).toBe(422);
+      expect(
+        (await keyRequest('PUT', { ...record, expires_at: -1 })).status,
+      ).toBe(422);
+      expect(await (await keyRequest('GET')).json()).toEqual({
+        data: {
+          ...publicRecord,
+          tenant_id: 'synthetic-replacement',
+          scopes: [],
+          expires_at: 1900000000,
+          revoked: true,
+        },
+      });
+
       expect(await inspect(1001)).toEqual({
         steam_app_id: 1001,
         state: 'uninitialized',
@@ -2574,6 +2745,40 @@ it('persists generation-fenced snapshots and publication changes, serves only el
         // stale/current flag, and any other response-only enrichment.
         expect(published.body).toEqual({ data: expected });
         expect(await lookup(id)).toEqual(expected);
+        expect((await keyRequest('PUT', { ...record, verifier })).status).toBe(
+          200,
+        );
+        const authorizedResult = await fetch(`${url}/fixture/protected/${id}`, {
+          headers: { Authorization: `Bearer ${customer}` },
+        });
+        expect(authorizedResult.status).toBe(200);
+        expect(await authorizedResult.json()).toEqual({ data: expected });
+        // Complete self-host bootstrap on a populated synthetic catalog:
+        // register above, read successfully, revoke, reject the very next read.
+        expect((await keyRequest('DELETE')).status).toBe(200);
+        await rejection(
+          await fetch(`${url}/fixture/protected/${id}`, {
+            headers: { Authorization: `Bearer ${customer}` },
+          }),
+          401,
+          'UNAUTHORIZED',
+        );
+        for (const [authorization, suffix] of [
+          [undefined, ''],
+          [`Bearer ${customer}`, ''],
+          [undefined, '?default'],
+          [`Bearer ${customer}`, '?default'],
+        ] as const) {
+          const anonymous = await fetch(
+            `${url}/fixture/anonymous/${id}${suffix}`,
+            {
+              headers: authorization ? { Authorization: authorization } : {},
+            },
+          );
+          expect(anonymous.status).toBe(200);
+          expect(await anonymous.json()).toEqual({ data: expected });
+          expect(anonymous.headers.get('X-Fixture-Registry-Reads')).toBe('0');
+        }
         await countedLookup(id, expected);
         expect(
           new Set([
@@ -3148,6 +3353,7 @@ it('persists generation-fenced snapshots and publication changes, serves only el
         tables: [
           { name: '__alchemy_migrations' },
           { name: '_cf_METADATA' }, // workerd's own D1 metadata, not catalog data
+          { name: 'api_key_registry' },
           { name: 'steam_application_publication' },
           { name: 'steam_application_snapshot' },
         ],
@@ -3157,7 +3363,7 @@ it('persists generation-fenced snapshots and publication changes, serves only el
           { name: 'generation', type: 'TEXT' },
           { name: 'generation_issued_at', type: 'INTEGER' },
         ],
-        history: [{ count: 3 }],
+        history: [{ count: 4 }],
       });
       return {
         lifecycle,
@@ -3244,8 +3450,90 @@ it('persists generation-fenced snapshots and publication changes, serves only el
         error: { code: 'PUBLICATION_WITHDRAWN' },
       });
       const audit = await json('/fixture/audit');
-      expect(audit).toMatchObject({ history: [{ count: 3 }] });
+      expect(audit).toMatchObject({ history: [{ count: 4 }] });
     });
+    // Restart with the actual Alchemy access-mode binding. No fixture-path
+    // rewriting or per-request mode override participates in this sequence.
+    await withWorker(async () => {
+      const keyId = `bootstrap-${randomUUID()}`;
+      const secret = Array.from(randomBytes(32), (byte) =>
+        byte.toString(16).padStart(2, '0'),
+      ).join('');
+      secrets.push(secret);
+      const verifier = Array.from(
+        new Uint8Array(
+          await crypto.subtle.digest(
+            'SHA-256',
+            new TextEncoder().encode(secret),
+          ),
+        ),
+        (byte) => byte.toString(16).padStart(2, '0'),
+      ).join('');
+      const application = persisted.publicApplications[0]!;
+      const path = `/v1/steam/applications/${application.steam_app_id}`;
+      const request = async (
+        target: string,
+        method = 'GET',
+        token?: string,
+        body?: unknown,
+      ) => {
+        const response = await fetch(`${url}${target}`, {
+          method,
+          headers: {
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            'Content-Type': 'application/json',
+          },
+          ...(body ? { body: JSON.stringify(body) } : {}),
+          signal: AbortSignal.timeout(10_000),
+        });
+        const text = await response.text();
+        for (const value of secrets)
+          expect(text.includes(value), 'No secret in bootstrap response').toBe(
+            false,
+          );
+        return { response, body: JSON.parse(text) };
+      };
+      const rejected = async () => {
+        const { response, body } = await request(
+          path,
+          'GET',
+          `${keyId}.${secret}`,
+        );
+        expect(response.status).toBe(401);
+        expect(body).toEqual({
+          error: {
+            code: 'UNAUTHORIZED',
+            request_id: response.headers.get('X-Request-ID'),
+          },
+        });
+      };
+      expect((await request(path)).response.status).toBe(401);
+      expect(
+        (await request(`/v1/keys/${keyId}`, 'GET', registry)).response.status,
+      ).toBe(404);
+      expect(
+        (
+          await request(`/v1/keys/${keyId}`, 'PUT', registry, {
+            verifier,
+            tenant_id: 'synthetic-bootstrap',
+            scopes: ['catalog:read'],
+            expires_at: null,
+            revoked: false,
+          })
+        ).response.status,
+      ).toBe(200);
+      expect(
+        (await request(`/v1/keys/${keyId}`, 'GET', registry)).response.status,
+      ).toBe(200);
+      const read = await request(path, 'GET', `${keyId}.${secret}`);
+      expect(read.response.status).toBe(200);
+      expect(read.body).toEqual({ data: application });
+      expect(
+        (await request(`/v1/keys/${keyId}`, 'DELETE', registry)).response
+          .status,
+      ).toBe(200);
+      await rejected();
+    }, 'protected');
     await assertNoCredentialFiles();
   } finally {
     await rm(directory, { recursive: true, force: true });

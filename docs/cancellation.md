@@ -125,3 +125,16 @@ observed interrupted Exit.
 Future routes and real asynchronous resources must explicitly adopt this
 lifecycle interface and define their own ownership/release behavior. Deployment,
 production experiments, and private crawler integration are out of scope.
+
+## Registry operations
+
+Registry verification and management use the same request signal and body-reader
+cleanup. Unlike catalog mutations, registry PUT/DELETE currently execute single
+prepared statements, outside the native batch/exec dispatch cutoff. They remain
+cooperatively interruptible while their binding promise is pending; Node gated
+HTTP tests assert 408 for verification, GET, PUT, and DELETE and no subsequent
+catalog read. A pending native statement can still commit after interruption.
+These tests prove the HTTP lifecycle, not native D1 rollback or completion.
+After an uncertain registry write, GET the Key ID and reconcile the full record;
+never infer rollback from a disconnect or 408. The catalog batch/exec cutoff and
+its local workerd evidence do not apply to these registry statements.

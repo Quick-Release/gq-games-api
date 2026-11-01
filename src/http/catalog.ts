@@ -4,6 +4,7 @@
 
 import { Cause, Effect, Exit, Layer, Option } from 'effect';
 import type { Context, Hono } from 'hono';
+import { parseApiKey, verifyApiKey } from '../services/api-key';
 import { Database } from '../db/database';
 import type { WorkerEnv } from '../env';
 import { Catalog, CatalogFailure } from '../services/catalog';
@@ -170,7 +171,7 @@ const rejectBody = async (c: Context<CatalogHttpEnv>) => {
 
 // Never trust Content-Length to establish either size or completeness. Decode
 // only after collecting at most the actual 32 KiB limit, rejecting invalid UTF-8.
-const readJsonBody = async (c: Context<CatalogHttpEnv>) => {
+export const readJsonBody = async (c: Context<CatalogHttpEnv>) => {
   const media = c.req.header('Content-Type') ?? '';
   const encoding = c.req.header('Content-Encoding');
   if (
@@ -290,7 +291,7 @@ const runCatalog = async <A>(
   return catalogError(c, 500, 'INTERNAL_SERVER_ERROR');
 };
 
-export const mountCatalog = (
+export const mountApiTransport = (
   app: Hono<CatalogHttpEnv>,
   options: CatalogHttpOptions,
 ) => {
@@ -329,14 +330,49 @@ export const mountCatalog = (
       lifecycle.dispose();
     }
   };
-  for (const path of [prefix, publicPrefix]) {
+  for (const path of [prefix, publicPrefix, '/v1/keys']) {
     app.use(path, transport);
     app.use(`${path}/*`, transport);
   }
+};
 
+export const mountCatalog = (
+  app: Hono<CatalogHttpEnv>,
+  options: CatalogHttpOptions,
+) => {
   app.get(`${publicPrefix}/:steamAppId`, async (c) => {
     const denied = requireHttps(c, options);
     if (denied) return denied;
+    const mode = c.env?.CATALOG_ACCESS_MODE ?? 'anonymous';
+    if (mode !== 'anonymous' && mode !== 'protected')
+      return catalogError(c, 503, 'SERVICE_UNAVAILABLE');
+    if (mode === 'protected') {
+      // Reject malformed credentials before constructing any database layer.
+      const credential = parseApiKey(c.req.header('Authorization'));
+      if (!credential) return catalogError(c, 401, 'UNAUTHORIZED');
+      if (!c.env?.DB) return catalogError(c, 503, 'SERVICE_UNAVAILABLE');
+      const lifecycle = c.get('requestLifecycle');
+      const result = await lifecycle.run(
+        // Capture binding construction defects in the same sanitized failure
+        // path as registry query failures.
+        Effect.suspend(() =>
+          verifyApiKey(credential).pipe(
+            Effect.provide(Database.layer(lifecycle.database(c.env.DB))),
+          ),
+        ),
+        'read',
+        undefined,
+        // Transport owns cleanup while verification and lookup share a signal.
+        { disposeOnExit: false },
+      );
+      if (Exit.isFailure(result)) {
+        if (Cause.hasInterruptsOnly(result.cause) && c.req.raw.signal.aborted)
+          return catalogError(c, 408, 'REQUEST_ABORTED');
+        return catalogError(c, 503, 'SERVICE_UNAVAILABLE');
+      }
+      if (!result.value || !result.value.scopes.includes('catalog:read'))
+        return catalogError(c, 401, 'UNAUTHORIZED');
+    }
     const steamAppId = parseAppId(c.req.param('steamAppId'));
     if (steamAppId === undefined) return catalogError(c, 400, 'INVALID_APP_ID');
 

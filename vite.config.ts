@@ -13,6 +13,7 @@ export default defineConfig(({ mode }) => ({
     ignorePatterns: [
       'pnpm-lock.yaml',
       '.agents/skills/**',
+      '.claude/**',
       'dist/**',
       '.alchemy/**',
       '.wrangler/**',
@@ -21,6 +22,7 @@ export default defineConfig(({ mode }) => ({
   lint: {
     ignorePatterns: [
       '.agents/skills/**',
+      '.claude/**',
       'dist/**',
       '.alchemy/**',
       '.wrangler/**',

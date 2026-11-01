@@ -7,9 +7,11 @@ import { Hono } from 'hono';
 import {
   catalogError,
   mountCatalog,
+  mountApiTransport,
   type CatalogHttpEnv,
   type CatalogHttpOptions,
 } from './http/catalog';
+import { mountRegistry } from './http/registry';
 import { getHealth } from './services/health';
 import { RequestStopped } from './http/request-lifecycle';
 
@@ -26,7 +28,9 @@ export const createApp = (options: CatalogHttpOptions = {}) => {
 
   app.get('/health', async (c) => c.json(await Effect.runPromise(getHealth)));
 
+  mountApiTransport(app, options);
   mountCatalog(app, options);
+  mountRegistry(app, options);
 
   app.notFound((c) =>
     c.get('catalogRequestId')

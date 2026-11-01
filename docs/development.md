@@ -9,6 +9,9 @@ src/services/catalog.ts  Lookup/acquisition/publication/snapshot Effect service
 src/services/publication.ts Strict content-free publication command validation
 src/services/snapshot.ts Strict snapshot validation and synthetic source policy
 src/http/catalog.ts      Catalog transport, private authentication, and errors
+src/http/registry.ts     Dedicated registry management HTTP routes
+src/services/api-key.ts  Opaque customer-key parsing and verification
+src/services/registry.ts Registry validation and management Effects
 src/db/                 Drizzle schema and Effect-native D1 service
 src/env.ts              Type-only Alchemy binding inference
 src/index.ts             Cloudflare Worker entrypoint
@@ -19,12 +22,17 @@ scripts/build-worker.ts  Offline Alchemy source-provider build adapter
 scripts/preview-worker.ts Local-only preview of the built Worker
 vite.config.ts           Vite+ test, lint, format, and check settings
 tests/app.test.ts        Node unit tests of the HTTP boundary
+tests/protected-http.test.ts Protected-read HTTP policy and cancellation
+tests/registry-http.test.ts Registry credential and failure boundaries
 tests/tooling.test.ts    Tooling configuration regression tests
 tests/database.test.ts   Database service unit tests with a D1 stub
 tests/integration/       Real local workerd catalog + D1/Drizzle tests
   catalog-lifecycle.ts    Composed HTTP acceptance inside catalog.test.ts
 tests/fixtures/http-gates.ts Local-only real D1 batch/read coordination
 docs/catalog-acceptance.md Parent HTTP/D1 category-to-test matrix
+docs/verification-registry.md Registry records, key format, and access modes
+docs/self-host-bootstrap.md Copyable protected-mode bootstrap sequence
+docs/protected-access-acceptance.md Protected-access evidence and its limits
 docs/research/           Implementation status, research, and remaining gates
 ```
 
@@ -170,13 +178,14 @@ local emulation only, not cloud resource management or migration execution.
 Restart reuses D1 identity and storage without replaying migrations.
 
 For non-dev commands the original credential-free scaffold retains
-`localState()`. Any configured publication secret blocks the ordinary stack
-before resource reconciliation: pinned Alchemy persists even `Redacted` values
-in plaintext JSON state. A secret-bearing deployment requires a separately
-approved protected state store, migration/recovery plan, and credential rollout.
-No cloud state bootstrap, encryption adapter, or CI deployment has been added.
-Protect existing state; deleting it or deploying from a fresh checkout can
-orphan resources or break reconciliation.
+`localState()`. Any configured publication secret — ingestion, publication
+admin, or registry — blocks the ordinary stack before resource reconciliation:
+pinned Alchemy persists even `Redacted` values in plaintext JSON state. A
+secret-bearing deployment requires a separately approved protected state store,
+migration/recovery plan, and credential rollout. No cloud state bootstrap,
+encryption adapter, or CI deployment has been added. Protect existing state;
+deleting it or deploying from a fresh checkout can orphan resources or break
+reconciliation.
 
 A future `Cloudflare.state()` backend can bootstrap real state infrastructure,
 even during commands people expect to be read-only or local. Do not add

@@ -133,3 +133,40 @@ export const applicationSnapshot = sqliteTable(
     ),
   ],
 );
+
+export const apiKeyRegistry = sqliteTable(
+  'api_key_registry',
+  {
+    keyId: text('key_id').primaryKey(),
+    verifier: text('verifier').notNull(),
+    tenantId: text('tenant_id').notNull(),
+    scopes: text('scopes', { mode: 'json' })
+      .$type<readonly 'catalog:read'[]>()
+      .notNull(),
+    expiresAt: integer('expires_at'),
+    revoked: integer('revoked', { mode: 'boolean' }).notNull(),
+  },
+  (table) => [
+    check(
+      'registry_key_id',
+      sql`length(${table.keyId}) between 1 and 128 and ${table.keyId} not glob '*[^A-Za-z0-9_-]*'`,
+    ),
+    check(
+      'registry_verifier',
+      sql`length(${table.verifier}) = 64 and ${table.verifier} not glob '*[^0-9a-f]*'`,
+    ),
+    check(
+      'registry_tenant',
+      sql`length(${table.tenantId}) between 1 and 128 and ${table.tenantId} not glob '*[^A-Za-z0-9_-]*'`,
+    ),
+    check(
+      'registry_scopes',
+      sql`${table.scopes} in ('[]', '["catalog:read"]')`,
+    ),
+    check(
+      'registry_expiry',
+      sql`${table.expiresAt} is null or (typeof(${table.expiresAt}) = 'integer' and ${table.expiresAt} between 0 and 9007199254740991)`,
+    ),
+    check('registry_revoked', sql`${table.revoked} in (0, 1)`),
+  ],
+);
