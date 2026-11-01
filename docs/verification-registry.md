@@ -2,7 +2,7 @@
 
 The API owns API Key records in its catalog D1 database. Alchemy applies the
 reviewed registry migration alongside existing migrations. There are no account
-or billing records, and catalog reads remain anonymous in this implementation.
+or billing records, and catalog reads remain anonymous by default.
 
 Configure `REGISTRY_BEARER_TOKEN` as a separate secret from
 `INGESTION_BEARER_TOKEN` and `PUBLICATION_ADMIN_BEARER_TOKEN`. Blank or shared
@@ -34,5 +34,38 @@ Successful operations return 200 with a `data` object containing `key_id`,
 `tenant_id`, `scopes`, `expires_at`, and `revoked`. The verifier is never
 returned. Responses use `Cache-Control: no-store` and a request ID. Database
 failures return 503 without driver causes, SQL or submitted values. Registry
-management does not issue secrets or verify customer credentials on catalog
-reads; that enforcement is subsequent work under ADR 0001.
+management does not issue secrets.
+
+## Protected catalog reads
+
+Set `CATALOG_ACCESS_MODE=protected` to require a customer key on
+`GET /v1/steam/applications/:steamAppId`. Omitted configuration defaults to
+`anonymous`; explicit `anonymous` has the same behavior and never reads the
+registry, even when an Authorization header is present. Unknown mode values fail
+closed with 503 on the consumer route.
+
+Send `Authorization: Bearer <keyId>.<secret>`, where the secret is an
+issuer-generated 256-bit CSPRNG value encoded as 64 hexadecimal characters. Hash
+the exact UTF-8 secret string with SHA-256 when populating the registry. The Key
+ID uses the existing registry identifier rules. The bearer scheme is case
+insensitive; the secret is opaque and case sensitive.
+
+Verification reads the registry per request, compares the digest in constant
+time, and returns a Principal with tenant and scopes. No Principal data appears
+in catalog responses. Missing, malformed, unknown, incorrect, expired, and
+revoked credentials all return the same sanitized 401 envelope. Expiry is
+exclusive: a key expires when the current Unix second is at least `expires_at`.
+A verified key without `catalog:read` returns 403. Registry failures return 503;
+no protected catalog read runs after verification failure. Responses retain
+request correlation and `Cache-Control: no-store`.
+
+There is no application cache or deliberate revocation grace period: each next
+request checks its registry read. This does not establish hosted D1 consistency
+or edge replication guarantees. Catalog representations and unknown-App-ID 404
+semantics remain unchanged after authorization. Ingestion, publication, and
+registry management retain their separate credentials and grant no authority to
+customer keys.
+
+Node tests cover HTTP policy; local workerd/D1 tests cover the pinned runtime
+and per-request updates with synthetic records. Neither establishes hosted D1 or
+edge semantics. No deployment or issuance service is included.

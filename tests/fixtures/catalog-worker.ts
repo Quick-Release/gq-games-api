@@ -348,6 +348,23 @@ const publicationContenders = (
 const catalogWorker = {
   async fetch(request: Request, env: WorkerEnv, ctx: ExecutionContext) {
     const url = new URL(request.url);
+    if (url.pathname.startsWith('/fixture/protected/')) {
+      const id = url.pathname.split('/').at(-1);
+      return app.fetch(
+        new Request(
+          new URL(`/v1/steam/applications/${id}`, request.url),
+          request,
+        ),
+        {
+          ...env,
+          CATALOG_ACCESS_MODE: 'protected',
+          DB: url.searchParams.has('outage')
+            ? failingReadBinding(env.DB)
+            : env.DB,
+        },
+        ctx,
+      );
+    }
     if (url.pathname === '/ready') return new Response('ready');
     if (url.pathname === '/fixture/http-lookup-failure') {
       return app.fetch(

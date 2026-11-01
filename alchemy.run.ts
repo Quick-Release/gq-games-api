@@ -24,6 +24,9 @@ export const apiConfig = {
   main: './src/index.ts',
   env: {
     DB: Db,
+    CATALOG_ACCESS_MODE: Config.String('CATALOG_ACCESS_MODE').pipe(
+      Config.withDefault('anonymous'),
+    ),
     // Config bindings are Worker secret_text values, never plaintext vars.
     // Blank defaults keep local scaffold/health usable and fail private routes
     // closed until independently rotatable credentials are supplied.

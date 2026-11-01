@@ -118,6 +118,7 @@ export const createRequestLifecycle = (options: {
       effect: Effect.Effect<A, E>,
       policy: 'read' | 'mutation',
       beforeMutation?: Effect.Effect<void>,
+      keepAlive = false,
     ) => {
       // Do not evaluate user work before the pinned runner checks its signal.
       // An aborted run still returns an Exit and disposes its owned handles.
@@ -146,7 +147,9 @@ export const createRequestLifecycle = (options: {
           observe('effect_exit', outcome);
           return exit;
         })
-        .finally(dispose);
+        .finally(() => {
+          if (!keepAlive) dispose();
+        });
       if (policy === 'mutation') options.waitUntil?.(promise);
       return promise;
     },

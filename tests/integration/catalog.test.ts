@@ -497,6 +497,98 @@ it('persists generation-fenced snapshots and publication changes, serves only el
         expires_at: null,
         revoked: false,
       };
+      expect((await keyRequest('GET')).status).toBe(404);
+      const secret = 'a'.repeat(64);
+      const digest = await crypto.subtle.digest(
+        'SHA-256',
+        new TextEncoder().encode(secret),
+      );
+      const verifier = Array.from(new Uint8Array(digest), (byte) =>
+        byte.toString(16).padStart(2, '0'),
+      ).join('');
+      const customer = `synthetic-key.${secret}`;
+      const protectedRead = (
+        credential: string | undefined = customer,
+        outage = false,
+      ) =>
+        fetch(`${url}/fixture/protected/4294967295${outage ? '?outage' : ''}`, {
+          headers: credential ? { Authorization: `Bearer ${credential}` } : {},
+        });
+      const rejection = async (
+        response: Response,
+        status: number,
+        code: string,
+      ) => {
+        expect(response.status).toBe(status);
+        expect(response.headers.get('Cache-Control')).toBe('no-store');
+        expect(await response.json()).toEqual({
+          error: {
+            code,
+            request_id: response.headers.get('X-Request-ID'),
+          },
+        });
+      };
+      // Exercise the production verifier, registry writes, and catalog lookup in workerd.
+      await rejection(await protectedRead(''), 401, 'UNAUTHORIZED');
+      await rejection(await protectedRead('malformed'), 401, 'UNAUTHORIZED');
+      await rejection(await protectedRead(), 401, 'UNAUTHORIZED');
+      expect((await keyRequest('PUT', { ...record, verifier })).status).toBe(
+        200,
+      );
+      await rejection(await protectedRead(), 404, 'NOT_FOUND');
+      await rejection(
+        await protectedRead(`synthetic-key.${'b'.repeat(64)}`),
+        401,
+        'UNAUTHORIZED',
+      );
+      await rejection(
+        await protectedRead(`unknown.${secret}`),
+        401,
+        'UNAUTHORIZED',
+      );
+      await rejection(
+        await protectedRead(customer, true),
+        503,
+        'SERVICE_UNAVAILABLE',
+      );
+      for (const mutation of [
+        { expires_at: 0 },
+        { revoked: true },
+        { scopes: [] },
+      ]) {
+        expect(
+          (await keyRequest('PUT', { ...record, verifier, ...mutation }))
+            .status,
+        ).toBe(200);
+        await rejection(
+          await protectedRead(),
+          'scopes' in mutation ? 403 : 401,
+          'scopes' in mutation ? 'FORBIDDEN' : 'UNAUTHORIZED',
+        );
+      }
+      expect((await keyRequest('PUT', { ...record, verifier })).status).toBe(
+        200,
+      );
+      for (const [path, method] of [
+        ['ingestion-authorization', 'POST'],
+        ['snapshot', 'PUT'],
+        ['publication', 'PUT'],
+        ['publication', 'GET'],
+      ]) {
+        expect(
+          (
+            await fetch(`${url}/internal/v1/steam/applications/1001/${path}`, {
+              method,
+              headers: { Authorization: `Bearer ${customer}` },
+            })
+          ).status,
+        ).toBe(401);
+      }
+      expect((await keyRequest('GET', undefined, customer)).status).toBe(401);
+      expect((await keyRequest('DELETE')).status).toBe(200);
+      await rejection(await protectedRead(), 401, 'UNAUTHORIZED');
+      // Restore the initial state for the existing management contract assertions.
+      expect((await keyRequest('PUT', record)).status).toBe(200);
       const publicRecord = {
         key_id: 'synthetic-key',
         tenant_id: 'synthetic-tenant',
@@ -505,7 +597,6 @@ it('persists generation-fenced snapshots and publication changes, serves only el
         revoked: false,
       };
       expect((await keyRequest('PUT', record, ingestion)).status).toBe(401);
-      expect((await keyRequest('GET')).status).toBe(404);
       for (let repeat = 0; repeat < 2; repeat++) {
         const response = await keyRequest('PUT', record);
         expect(response.status).toBe(200);
@@ -2654,6 +2745,14 @@ it('persists generation-fenced snapshots and publication changes, serves only el
         // stale/current flag, and any other response-only enrichment.
         expect(published.body).toEqual({ data: expected });
         expect(await lookup(id)).toEqual(expected);
+        expect((await keyRequest('PUT', { ...record, verifier })).status).toBe(
+          200,
+        );
+        const authorizedResult = await fetch(`${url}/fixture/protected/${id}`, {
+          headers: { Authorization: `Bearer ${customer}` },
+        });
+        expect(authorizedResult.status).toBe(200);
+        expect(await authorizedResult.json()).toEqual({ data: expected });
         await countedLookup(id, expected);
         expect(
           new Set([

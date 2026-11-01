@@ -4,6 +4,7 @@
 
 import { Cause, Effect, Exit, Layer, Option } from 'effect';
 import type { Context, Hono } from 'hono';
+import { apiKeyPattern, verifyApiKey } from '../services/api-key';
 import { Database } from '../db/database';
 import type { WorkerEnv } from '../env';
 import { Catalog, CatalogFailure } from '../services/catalog';
@@ -342,6 +343,33 @@ export const mountCatalog = (
   app.get(`${publicPrefix}/:steamAppId`, async (c) => {
     const denied = requireHttps(c, options);
     if (denied) return denied;
+    const mode = c.env?.CATALOG_ACCESS_MODE ?? 'anonymous';
+    if (mode !== 'anonymous' && mode !== 'protected')
+      return catalogError(c, 503, 'SERVICE_UNAVAILABLE');
+    if (mode === 'protected') {
+      if (!apiKeyPattern.test(c.req.header('Authorization') ?? ''))
+        return catalogError(c, 401, 'UNAUTHORIZED');
+      if (!c.env?.DB) return catalogError(c, 503, 'SERVICE_UNAVAILABLE');
+      const lifecycle = c.get('requestLifecycle');
+      const verification = verifyApiKey(c.req.header('Authorization'));
+      // Malformed credentials can be rejected even when D1 is unconfigured.
+      const result = await lifecycle.run(
+        verification.pipe(
+          Effect.provide(Database.layer(lifecycle.database(c.env?.DB))),
+        ),
+        'read',
+        undefined,
+        true, // Catalog lookup shares this request's cancellation listener.
+      );
+      if (Exit.isFailure(result)) {
+        if (Cause.hasInterruptsOnly(result.cause) && c.req.raw.signal.aborted)
+          return catalogError(c, 408, 'REQUEST_ABORTED');
+        return catalogError(c, 503, 'SERVICE_UNAVAILABLE');
+      }
+      if (!result.value) return catalogError(c, 401, 'UNAUTHORIZED');
+      if (!result.value.scopes.includes('catalog:read'))
+        return catalogError(c, 403, 'FORBIDDEN');
+    }
     const steamAppId = parseAppId(c.req.param('steamAppId'));
     if (steamAppId === undefined) return catalogError(c, 400, 'INVALID_APP_ID');
 
