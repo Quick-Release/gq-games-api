@@ -3,7 +3,7 @@
 // See LICENSE in the repository root.
 
 import { execFile, spawn } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { cp, mkdir, mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -498,7 +498,10 @@ it('persists generation-fenced snapshots and publication changes, serves only el
         revoked: false,
       };
       expect((await keyRequest('GET')).status).toBe(404);
-      const secret = 'a'.repeat(64);
+      const secret = Array.from(randomBytes(32), (byte) =>
+        byte.toString(16).padStart(2, '0'),
+      ).join('');
+      secrets.push(secret);
       const digest = await crypto.subtle.digest(
         'SHA-256',
         new TextEncoder().encode(secret),
@@ -2749,6 +2752,24 @@ it('persists generation-fenced snapshots and publication changes, serves only el
         });
         expect(authorizedResult.status).toBe(200);
         expect(await authorizedResult.json()).toEqual({ data: expected });
+        // Complete self-host bootstrap on a populated synthetic catalog:
+        // register above, read successfully, revoke, reject the very next read.
+        expect((await keyRequest('DELETE')).status).toBe(200);
+        await rejection(
+          await fetch(`${url}/fixture/protected/${id}`, {
+            headers: { Authorization: `Bearer ${customer}` },
+          }),
+          401,
+          'UNAUTHORIZED',
+        );
+        for (const authorization of [undefined, `Bearer ${customer}`]) {
+          const anonymous = await fetch(`${url}/fixture/anonymous/${id}`, {
+            headers: authorization ? { Authorization: authorization } : {},
+          });
+          expect(anonymous.status).toBe(200);
+          expect(await anonymous.json()).toEqual({ data: expected });
+          expect(anonymous.headers.get('X-Fixture-Registry-Reads')).toBe('0');
+        }
         await countedLookup(id, expected);
         expect(
           new Set([

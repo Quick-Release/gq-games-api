@@ -348,6 +348,37 @@ const publicationContenders = (
 const catalogWorker = {
   async fetch(request: Request, env: WorkerEnv, ctx: ExecutionContext) {
     const url = new URL(request.url);
+    if (url.pathname.startsWith('/fixture/anonymous/')) {
+      let registryReads = 0;
+      const db = new Proxy(env.DB, {
+        get(target, property) {
+          if (property === 'prepare')
+            return (query: string) => {
+              if (query.includes('api_key_registry')) {
+                registryReads++;
+                throw new Error('Anonymous registry access forbidden');
+              }
+              return target.prepare(query);
+            };
+          const value: unknown = Reflect.get(target, property, target);
+          return typeof value === 'function' ? value.bind(target) : value;
+        },
+      });
+      const response = await app.fetch(
+        new Request(
+          new URL(
+            `/v1/steam/applications/${url.pathname.split('/').at(-1)}`,
+            request.url,
+          ),
+          request,
+        ),
+        { ...env, CATALOG_ACCESS_MODE: 'anonymous', DB: db },
+        ctx,
+      );
+      const result = new Response(response.body, response);
+      result.headers.set('X-Fixture-Registry-Reads', String(registryReads));
+      return result;
+    }
     if (url.pathname.startsWith('/fixture/protected/')) {
       const id = url.pathname.split('/').at(-1);
       return app.fetch(

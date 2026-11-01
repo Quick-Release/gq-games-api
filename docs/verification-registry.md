@@ -70,3 +70,8 @@ customer keys.
 Node tests cover HTTP policy; local workerd/D1 tests cover the pinned runtime
 and per-request updates with synthetic records. Neither establishes hosted D1 or
 edge semantics. No deployment or issuance service is included.
+
+For copyable registration, read, and revocation commands, follow the
+[self-host bootstrap](self-host-bootstrap.md). The
+[acceptance record](protected-access-acceptance.md) separates Node HTTP evidence
+from local workerd/D1 evidence and documents the access-control limits.
