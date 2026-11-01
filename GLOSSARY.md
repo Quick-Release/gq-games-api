@@ -54,3 +54,25 @@ metadata version
 application eligible for publication under new authorization. It does not
 restore previously withdrawn metadata. _Avoid_: metadata restoration, Steam
 relisting
+
+**API Key**: A high-entropy secret shown once at issuance and presented as a
+bearer credential. The catalog stores only its non-secret Key ID and a one-way
+verifier, never the secret itself. _Avoid_: password, session token
+
+**Principal**: The identity established by a verified API Key: an owning tenant
+together with its granted scopes. A Principal is not a customer account and
+carries no billing or publication authority. _Avoid_: user, account
+
+**Scope**: A named, minimal permission granted to an API Key, such as
+`catalog:read`. A scope never implies ingestion or publication administration.
+_Avoid_: role, permission level
+
+**Verification Registry**: The catalog's own record of API Key IDs, verifiers,
+scopes, expiry, and revocation state, written through an authenticated
+management interface. It is not an issuer's account or billing database.
+_Avoid_: key database (when implying account data), issuer
+
+**Protected Mode**: An opt-in configuration in which consumer catalog reads
+require a verified Principal with `catalog:read`. It is off by default, and
+anonymous lookup remains the default contract. _Avoid_: closed mode, private
+mode
