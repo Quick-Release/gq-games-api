@@ -31,10 +31,10 @@ through production routes with the code-only HTTP allowance. This is local
 acceptance, not an HTTPS deployment recipe. Keep ingestion and publication-admin
 credentials independently generated and distinct from this registry credential.
 Blank or shared management credentials fail closed with 503. Do not use this
-procedure to deploy: secret-bearing cloud deployment is currently blocked
-pending an approved protected state store. Restart/reconfigure the existing
-process before continuing; exporting variables does not change an already
-running process.
+procedure to deploy; see [ADR 0002](adr/0002-first-hosted-deployment.md) and
+[development](development.md) for the encrypted-state deployment path.
+Restart/reconfigure the existing process before continuing; exporting variables
+does not change an already running process.
 
 Before registration, verify the configured host actually rejects anonymous
 reads:

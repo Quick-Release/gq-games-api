@@ -136,22 +136,31 @@ Keep credentials out of pull-request jobs, especially contributions from forks.
 
 ## Manual deployment preparation
 
-1. Pick an account and a disposable stage; do not infer the intended account
-   from another GQ project.
+1. Pick an account and stage; do not infer the intended account from another GQ
+   project. [ADR 0002](adr/0002-first-hosted-deployment.md) records the approved
+   first hosted deployment (`production` stage).
 2. Connect Cloudflare in the **project-local Alchemy CLI** with
    `pnpm exec alchemy profile edit --add cloudflare`. Credentials/profiles are
    separate from Wrangler and Pi authentication. For tokens, consult current
    Alchemy setup docs and scope permissions to the resources required; never
    commit tokens or copy local credential files.
-3. Review `pnpm plan --stage dev`. It may access the account; it has not been
-   run as part of scaffolding.
-4. Deploy explicitly with `pnpm run deploy --stage dev` (bare `pnpm deploy` is
-   pnpm's unrelated workspace deployment command). Alchemy determines names from
-   stack/stage/resource identity; do not assume a local dev identity is the
-   deployed resource name.
-5. Verify `/health` on the returned URL and record the runtime experiment.
+3. From a clean checkout of the commit to serve, export `API_DOMAIN` (a hostname
+   on a zone already in the account) and
+   `SOURCE_REVISION="$(git rev-parse HEAD)"`. Deployed stages refuse to run
+   without both. Supply secrets from your own secret store in the same shell,
+   never from a committed file.
+4. Review `pnpm plan --stage production`. Its first run bootstraps Alchemy's
+   encrypted Cloudflare state store in the account (a Worker, Durable Object,
+   and Secrets Store entry) and so is not read-only.
+5. Deploy explicitly with `pnpm run deploy --stage production` (bare
+   `pnpm deploy` is pnpm's unrelated workspace deployment command). Alchemy
+   determines names from stack/stage/resource identity; do not assume a local
+   dev identity is the deployed resource name.
+6. Verify `/health`, the `GET /` source offer, and an anonymous lookup on
+   `https://$API_DOMAIN`, and record the runtime experiment.
 
-`workersDev: true` makes the deployed Worker publicly accessible. Private
+Deployed stages serve only `API_DOMAIN` (`workersDev: false`); local dev keeps
+the `workersDev: true` scaffold setting, which is not deployed. Private
 publication acquisition/inspection/change and complete snapshot submission are
 implemented; anonymous public lookup is also implemented. Production quotas and
 CORS policy are not. D1 retains minimal publication control separately from
@@ -177,22 +186,19 @@ memory so resolved bearer secrets never enter JSON state. This adapter is for
 local emulation only, not cloud resource management or migration execution.
 Restart reuses D1 identity and storage without replaying migrations.
 
-For non-dev commands the original credential-free scaffold retains
-`localState()`. Any configured publication secret — ingestion, publication
-admin, or registry — blocks the ordinary stack before resource reconciliation:
-pinned Alchemy persists even `Redacted` values in plaintext JSON state. A
-secret-bearing deployment requires a separately approved protected state store,
-migration/recovery plan, and credential rollout. No cloud state bootstrap,
-encryption adapter, or CI deployment has been added. Protect existing state;
-deleting it or deploying from a fresh checkout can orphan resources or break
-reconciliation.
-
-A future `Cloudflare.state()` backend can bootstrap real state infrastructure,
-even during commands people expect to be read-only or local. Do not add
-automatic approval flags casually. This project uses Alchemy's local Worker
-provider with credential-free persisted D1 state and ephemeral Worker state for
-development; retain local-only provider defaults. Neither ignored state nor
-`Redacted` logging wrappers are secret encryption.
+Non-dev commands use Alchemy's `Cloudflare.state()` store
+([ADR 0002](adr/0002-first-hosted-deployment.md)): AES-encrypted state in a
+Durable Object, keyed from the account's Secrets Store, with its access token in
+the operator's local Alchemy profile credentials. Pinned Alchemy persists even
+`Redacted` values, so deployed stages never use the plaintext local adapter. The
+store is bootstrapped on the first non-dev command, even `plan`. Do not add
+automatic approval flags casually. Losing the profile token or the Secrets Store
+key needs Alchemy's state-store recovery, not a fresh checkout; deleting state
+can orphan resources or break reconciliation. CI still never deploys. This
+project uses Alchemy's local Worker provider with credential-free persisted D1
+state and ephemeral Worker state for development; retain local-only provider
+defaults. Neither ignored state nor `Redacted` logging wrappers are secret
+encryption.
 
 Private publication routes use `INGESTION_BEARER_TOKEN` and
 `PUBLICATION_ADMIN_BEARER_TOKEN` via Alchemy `Config.Redacted` bindings, emitted

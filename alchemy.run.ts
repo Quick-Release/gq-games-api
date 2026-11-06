@@ -11,7 +11,7 @@ import {
   State,
   type StateService,
 } from 'alchemy/State';
-import { Config, Effect, Layer, Redacted } from 'effect';
+import { Config, Effect, Layer, Redacted, Schema } from 'effect';
 import drizzleConfig from './drizzle.config.ts';
 
 export const Db = Cloudflare.D1.Database('Database', {
@@ -42,6 +42,19 @@ export const apiConfig = {
     // Exact synthetic URL/extractor pairs; empty configuration approves nothing.
     // This is an enforcement policy, not source-rights approval.
     APPROVED_SNAPSHOT_SOURCES: Config.String('APPROVED_SNAPSHOT_SOURCES').pipe(
+      Config.withDefault(''),
+    ),
+    // Abuse control for the anonymous public read (ADR 0002), per client IP.
+    CATALOG_RATE_LIMIT: Cloudflare.RateLimit('CATALOG_RATE_LIMIT', {
+      namespaceId: 1001,
+      simple: { limit: 100, period: 60 },
+    }),
+    // AGPL-3.0 section 13 source offer for the served revision (ADR 0002).
+    // Deployed stages require the exact commit; local stages may omit it.
+    SOURCE_REPOSITORY: Config.String('SOURCE_REPOSITORY').pipe(
+      Config.withDefault('https://github.com/Quick-Release/gq-games-api'),
+    ),
+    SOURCE_REVISION: Config.String('SOURCE_REVISION').pipe(
       Config.withDefault(''),
     ),
   },
@@ -110,39 +123,49 @@ export const localPublicationState = Layer.effect(
   }),
 ).pipe(Layer.provide(localState()));
 
-// Never use ephemeral Worker state to manage cloud infrastructure. Keep the
-// original credential-free scaffold state, and block secret-bearing non-dev
-// runs until an independently approved protected state/rollout plan exists.
+// Deployed stages keep all state, including resolved Worker secrets, in
+// Alchemy's encrypted Cloudflare state store (ADR 0002). The plaintext JSON
+// adapter above stays local-only, and no non-dev stage ever uses it.
+export const deploymentState = Cloudflare.state();
+
+export const stateFor = (dev: boolean) =>
+  dev ? localPublicationState : deploymentState;
+
 export const publicationState = Layer.unwrap(
   Effect.gen(function* () {
-    if ((yield* AlchemyContext).dev) return localPublicationState;
-    const ingestion = yield* apiConfig.env.INGESTION_BEARER_TOKEN;
-    const admin = yield* apiConfig.env.PUBLICATION_ADMIN_BEARER_TOKEN;
-    const registry = yield* apiConfig.env.REGISTRY_BEARER_TOKEN;
-    if (
-      Redacted.value(ingestion) ||
-      Redacted.value(admin) ||
-      Redacted.value(registry)
-    ) {
-      return yield* Effect.die(
-        'Configured publication secrets require an approved protected deployment state store. This capability is local-only.',
-      );
-    }
-    // Preserve the original credential-free scaffold's durable state. A real
-    // secret-bearing deployment needs a separately approved state/rollout plan.
-    return localState();
-  }).pipe(Effect.orDie),
+    return stateFor((yield* AlchemyContext).dev);
+  }),
 );
+
+const CommitSha = Schema.String.check(Schema.isPattern(/^[0-9a-f]{40}$/));
+const Hostname = Schema.String.check(
+  Schema.isPattern(
+    /^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/,
+  ),
+);
+
+// Deployed stages serve only from one reviewed custom hostname, never from
+// workers.dev, and must name the exact source revision they serve. Neither the
+// hostname nor any account identifier is committed to this public repository.
+export const deploymentTarget = Effect.gen(function* () {
+  const domain = yield* Config.schema(Hostname, 'API_DOMAIN');
+  yield* Config.schema(CommitSha, 'SOURCE_REVISION');
+  return { domain, workersDev: false } as const;
+});
 
 export default Alchemy.Stack(
   'gq-games-api',
   {
     providers: Cloudflare.providers(),
-    // Deliberately no cloud-state bootstrap or secret persistence.
     state: publicationState,
   },
   Effect.gen(function* () {
-    const api = yield* Api;
+    if ((yield* AlchemyContext).dev) {
+      const api = yield* Api;
+      return { url: api.url };
+    }
+    const target = yield* deploymentTarget.pipe(Effect.orDie);
+    const api = yield* Cloudflare.Worker('Api', { ...apiConfig, ...target });
     return { url: api.url };
   }),
 );

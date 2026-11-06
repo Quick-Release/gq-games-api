@@ -8,7 +8,14 @@ import { AlchemyContext } from 'alchemy/AlchemyContext';
 import { State } from 'alchemy/State';
 import { ConfigProvider, Effect } from 'effect';
 import { describe, expect, it } from 'vite-plus/test';
-import { apiConfig, Db, publicationState } from '../alchemy.run';
+import {
+  apiConfig,
+  Db,
+  deploymentState,
+  deploymentTarget,
+  localPublicationState,
+  stateFor,
+} from '../alchemy.run';
 import drizzleConfig from '../drizzle.config';
 import pkg from '../package.json';
 
@@ -41,49 +48,70 @@ describe('Alchemy tooling', () => {
     expect(existsSync('drizzle/meta/_journal.json')).toBe(false);
   });
 
-  it('never persists configured publication secrets in Alchemy JSON state', async () => {
-    const stateId = (
-      dev: boolean,
-      secrets: Record<string, string | undefined>,
-    ) =>
-      Effect.gen(function* () {
-        const state = yield* yield* State;
-        return state.id;
-      }).pipe(
-        Effect.provide(publicationState),
-        Effect.provideService(AlchemyContext, {
-          dotAlchemy: '.alchemy',
-          dev,
-          adopt: false,
-        }),
-        Effect.provideService(
-          ConfigProvider.ConfigProvider,
-          ConfigProvider.fromUnknown(secrets),
-        ),
-        Effect.provide(NodeServices.layer),
-      );
+  it('keeps secrets out of JSON state: local adapter for dev, encrypted store otherwise', async () => {
     const secrets = {
       INGESTION_BEARER_TOKEN: crypto.randomUUID(),
       PUBLICATION_ADMIN_BEARER_TOKEN: crypto.randomUUID(),
     };
-    expect(await Effect.runPromise(stateId(true, secrets))).toBe(
-      'local-publication',
+    const localId = Effect.gen(function* () {
+      const state = yield* yield* State;
+      return state.id;
+    }).pipe(
+      Effect.provide(localPublicationState),
+      Effect.provideService(AlchemyContext, {
+        dotAlchemy: '.alchemy',
+        dev: true,
+        adopt: false,
+      }),
+      Effect.provideService(
+        ConfigProvider.ConfigProvider,
+        ConfigProvider.fromUnknown(secrets),
+      ),
+      Effect.provide(NodeServices.layer),
     );
-    expect(await Effect.runPromise(stateId(false, {}))).toBe('local');
-    for (const configured of [
-      secrets,
-      { INGESTION_BEARER_TOKEN: secrets.INGESTION_BEARER_TOKEN },
+    expect(await Effect.runPromise(localId)).toBe('local-publication');
+    expect(stateFor(true)).toBe(localPublicationState);
+    // Deployed stages never fall back to plaintext local JSON state.
+    expect(stateFor(false)).toBe(deploymentState);
+    expect(stateFor(false)).not.toBe(localPublicationState);
+  });
+
+  it('requires a hostname and exact source revision for deployed stages', async () => {
+    const target = (config: Record<string, unknown>) =>
+      Effect.runPromiseExit(
+        deploymentTarget.pipe(
+          Effect.provideService(
+            ConfigProvider.ConfigProvider,
+            ConfigProvider.fromUnknown(config),
+          ),
+        ),
+      );
+    const revision = 'a'.repeat(40);
+    const ok = await target({
+      API_DOMAIN: 'games-api.example.com',
+      SOURCE_REVISION: revision,
+    });
+    expect(ok).toMatchObject({
+      _tag: 'Success',
+      value: { domain: 'games-api.example.com', workersDev: false },
+    });
+    for (const config of [
+      { SOURCE_REVISION: revision },
+      { API_DOMAIN: 'games-api.example.com' },
+      { API_DOMAIN: 'games-api.example.com', SOURCE_REVISION: 'main' },
       {
-        PUBLICATION_ADMIN_BEARER_TOKEN: secrets.PUBLICATION_ADMIN_BEARER_TOKEN,
+        API_DOMAIN: 'https://games-api.example.com',
+        SOURCE_REVISION: revision,
       },
     ]) {
-      const exit = await Effect.runPromiseExit(stateId(false, configured));
-      expect(exit._tag).toBe('Failure');
-      const diagnostic = String(exit);
-      expect(diagnostic).toContain('approved protected deployment state store');
-      expect(diagnostic).not.toContain(secrets.INGESTION_BEARER_TOKEN);
-      expect(diagnostic).not.toContain(secrets.PUBLICATION_ADMIN_BEARER_TOKEN);
+      expect((await target(config))._tag).toBe('Failure');
     }
+  });
+
+  it('rate limits the anonymous read through a declared binding', () => {
+    expect(apiConfig.env.CATALOG_RATE_LIMIT).toMatchObject({
+      simple: { limit: 100, period: 60 },
+    });
   });
 
   it('keeps local tooling separate from deployment stages', () => {

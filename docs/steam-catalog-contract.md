@@ -361,6 +361,7 @@ withdrawal reasons, or underlying driver causes.
 | 413    | Request body exceeds 32 KiB (`PAYLOAD_TOO_LARGE`)                                                                      |
 | 415    | Unsupported media type or encoding (`UNSUPPORTED_MEDIA_TYPE`)                                                          |
 | 422    | Invalid fields, missing required fields/headers, unknown JSON keys, or invalid observation floor (`VALIDATION_FAILED`) |
+| 429    | Anonymous lookup over the per-client-IP rate limit (`RATE_LIMITED`); public GET only, checked after HTTPS              |
 | 500    | Unexpected failure (`INTERNAL_SERVER_ERROR`)                                                                           |
 | 503    | Temporary unavailability or missing required private-route configuration (`SERVICE_UNAVAILABLE`)                       |
 
