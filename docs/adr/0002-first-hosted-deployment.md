@@ -61,6 +61,29 @@ for the actual served revision to ship with the first deployment.
    deploy and seed steps. Secrets never enter the repository, CI, or agent
    sessions. CI still never deploys.
 
+## Amendment (2026-11-06): agent-run deployment
+
+Decision 7 changed before the first deployment. The maintainer had an agent
+session run the deployment instead of running it personally:
+
+- The ingestion and publication-admin secrets were generated in process and
+  stored only in a dedicated Sigillo project (GQ Games API, `production`). They
+  were never printed, committed, or written to a file.
+- Cloudflare access used the existing shared Sigillo token manager. Each step
+  minted one account-owned token that expired after at most one hour and was
+  revoked when the step ended. The deploy token held Workers Scripts, D1 and
+  Secrets Store write plus Account Settings read on the account, and Zone read,
+  Workers Routes write and DNS write on the API's zone only. A read-only
+  preflight token confirmed the zone and plan.
+- The account already had an Alchemy Cloudflare state store. The stack reuses
+  it, so no new state store resources were created.
+- The account's Workers plan could not be confirmed through the API. This
+  deployment runs within Workers Free limits if needed. Consumers that budget on
+  Workers Paid must confirm the plan separately.
+
+CI still never deploys, and later deployments follow the same minted-credential
+pattern or an operator-run equivalent.
+
 ## Consequences
 
 - A deployed consumer GET can return a published snapshot, but only synthetic

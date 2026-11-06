@@ -9,12 +9,12 @@ by default), complete snapshot submission, publication authorization
 acquisition, and admin inspection/withdrawal/reinstatement on local D1. Issue #6
 adds composed HTTP lifecycle/recovery acceptance, verified in isolated local
 workerd. See the [acceptance matrix](docs/catalog-acceptance.md) for
-reproducible test sections, completed quality commands, and evidence limits.
-[ADR 0002](docs/adr/0002-first-hosted-deployment.md) approves a first hosted
-deployment of the anonymous consumer read (encrypted state, custom hostname,
-rate limit, source offer, one synthetic verification record); until it is run,
-no cloud resources have been provisioned or service deployed. `gq-crawl`
-integration and real-source approval remain out of scope.
+reproducible test sections, completed quality commands, and evidence limits. Per
+[ADR 0002](docs/adr/0002-first-hosted-deployment.md), the anonymous consumer
+read is deployed at **<https://games-api.bnq.pt>** (revision `7c5f3ea`), serving
+one synthetic verification record (App ID 1001) and no real game data. See the
+[deployment record](docs/deployment-record.md). `gq-crawl` integration and
+real-source approval remain out of scope.
 
 ## Direction
 
@@ -223,9 +223,10 @@ self-hosting. The software is provided without warranty; see the license for
 details.
 
 The planned paid service charges for the managed API, infrastructure, maintained
-data, and support—not for the right to use the code commercially. No hosted
-service, pricing, billing, or real-source ingestion exists; catalog lookup is
-local and synthetic only.
+data, and support—not for the right to use the code commercially. No paid
+service, pricing, billing, or real-source ingestion exists. The one hosted
+deployment serves synthetic data only and offers its exact source revision at
+`GET /`.
 
 Modified network-served versions must prominently offer their corresponding
 source to users as required by AGPL section 13. Future SDKs are intended to use
