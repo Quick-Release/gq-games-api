@@ -44,6 +44,7 @@ type ErrorStatus =
   | 413
   | 415
   | 422
+  | 429
   | 500
   | 503;
 type ErrorCode =
@@ -61,6 +62,7 @@ type ErrorCode =
   | 'UNSUPPORTED_MEDIA_TYPE'
   | 'PAYLOAD_TOO_LARGE'
   | 'VALIDATION_FAILED'
+  | 'RATE_LIMITED'
   | 'INTERNAL_SERVER_ERROR'
   | 'SERVICE_UNAVAILABLE';
 
@@ -120,6 +122,22 @@ const authenticate = (
     return catalogError(c, 403, 'FORBIDDEN');
   }
   return requireHttps(c, options);
+};
+
+// Abuse control for the anonymous public read, not authorization: a missing
+// binding (Node tests, overriding fixtures) or a limiter failure lets the
+// request through. Cloudflare counts per location and eventually consistently.
+const limitPublicRead = async (c: Context<CatalogHttpEnv>) => {
+  const limiter = c.env?.CATALOG_RATE_LIMIT;
+  if (!limiter) return;
+  const key = c.req.header('CF-Connecting-IP') ?? 'unidentified-client';
+  let outcome;
+  try {
+    outcome = await limiter.limit({ key });
+  } catch {
+    return;
+  }
+  if (!outcome.success) return catalogError(c, 429, 'RATE_LIMITED');
 };
 
 const parseAppId = (value: string) =>
@@ -343,6 +361,8 @@ export const mountCatalog = (
   app.get(`${publicPrefix}/:steamAppId`, async (c) => {
     const denied = requireHttps(c, options);
     if (denied) return denied;
+    const limited = await limitPublicRead(c);
+    if (limited) return limited;
     const mode = c.env?.CATALOG_ACCESS_MODE ?? 'anonymous';
     if (mode !== 'anonymous' && mode !== 'protected')
       return catalogError(c, 503, 'SERVICE_UNAVAILABLE');

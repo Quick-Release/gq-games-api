@@ -9,9 +9,11 @@ Configure `REGISTRY_BEARER_TOKEN` as a separate secret from
 management credentials disable registry access with 503. All registry operations
 require HTTPS and `Authorization: Bearer <registry credential>`; incorrect or
 missing authorization returns 401 before reading the body or accessing D1. Local
-integration fixtures permit HTTP only through a code-only test option.
-Secret-bearing cloud deployment remains blocked pending an approved protected
-state store, including when only the registry credential is configured.
+integration fixtures permit HTTP only through a code-only test option. Deployed
+stages keep secrets in Alchemy's encrypted state store
+([ADR 0002](adr/0002-first-hosted-deployment.md)). The first hosted deployment
+runs anonymous and configures no registry credential, so these routes return 503
+there.
 
 - `PUT /v1/keys/:keyId` replaces the complete record, idempotently. The last
   committed write wins, including its revocation state. A later PUT can

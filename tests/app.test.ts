@@ -13,8 +13,48 @@ describe('research API', () => {
     expect(await response.json()).toEqual({
       service: 'gq-games-api',
       maturity: 'research',
-      endpoints: { health: '/health' },
+      endpoints: {
+        health: '/health',
+        steam_application: '/v1/steam/applications/{steamAppId}',
+      },
+      source: {
+        license: 'AGPL-3.0-only',
+        repository: 'https://github.com/Quick-Release/gq-games-api',
+        revision: null,
+        url: 'https://github.com/Quick-Release/gq-games-api',
+      },
     });
+  });
+
+  it('offers the exact served source revision (AGPL-3.0 section 13)', async () => {
+    const revision = '0123456789abcdef0123456789abcdef01234567';
+    const served = async (env: Record<string, unknown>) => {
+      const body = await (
+        await createApp().request('/', undefined, env)
+      ).json();
+      return (body as { source: unknown }).source;
+    };
+
+    expect(await served({ SOURCE_REVISION: revision })).toEqual({
+      license: 'AGPL-3.0-only',
+      repository: 'https://github.com/Quick-Release/gq-games-api',
+      revision,
+      url: `https://github.com/Quick-Release/gq-games-api/tree/${revision}`,
+    });
+    expect(
+      await served({
+        SOURCE_REPOSITORY: 'https://git.example.invalid/fork',
+        SOURCE_REVISION: revision,
+      }),
+    ).toMatchObject({
+      repository: 'https://git.example.invalid/fork',
+      url: `https://git.example.invalid/fork/tree/${revision}`,
+    });
+    for (const SOURCE_REVISION of ['', 'main', revision.toUpperCase()]) {
+      expect(await served({ SOURCE_REVISION })).toMatchObject({
+        revision: null,
+      });
+    }
   });
 
   it('runs the Effect health service through Hono', async () => {

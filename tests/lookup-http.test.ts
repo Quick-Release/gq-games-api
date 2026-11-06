@@ -397,3 +397,56 @@ describe('anonymous Steam Application lookup HTTP boundary', () => {
     expect(ids.size).toBe(3);
   });
 });
+
+describe('anonymous lookup rate limit', () => {
+  const limiter = (success: boolean | Error) => ({
+    limit: vi.fn(async ({ key }: { key: string }) => {
+      if (success instanceof Error) throw success;
+      return { success, key };
+    }),
+  });
+
+  it('keys the limit by client IP and rejects over-limit reads before lookup', async () => {
+    const { app, lookup } = fixture();
+    const CATALOG_RATE_LIMIT = limiter(false);
+    const response = await app.request(
+      `${prefix}/1001`,
+      { headers: { 'CF-Connecting-IP': '192.0.2.10' } },
+      { CATALOG_RATE_LIMIT },
+    );
+    await error(response, 429, 'RATE_LIMITED');
+    expect(CATALOG_RATE_LIMIT.limit).toHaveBeenCalledWith({
+      key: '192.0.2.10',
+    });
+    expect(lookup).not.toHaveBeenCalled();
+  });
+
+  it('serves within the limit and fails open when the limiter fails', async () => {
+    for (const CATALOG_RATE_LIMIT of [
+      limiter(true),
+      limiter(new Error('synthetic limiter failure')),
+    ]) {
+      const { app, lookup } = fixture();
+      const response = await app.request(`${prefix}/1001`, undefined, {
+        CATALOG_RATE_LIMIT,
+      });
+      expect(response.status).toBe(200);
+      expect(CATALOG_RATE_LIMIT.limit).toHaveBeenCalledWith({
+        key: 'unidentified-client',
+      });
+      expect(lookup).toHaveBeenCalledOnce();
+    }
+  });
+
+  it('still rejects plain HTTP before counting', async () => {
+    const { app } = fixture();
+    const CATALOG_RATE_LIMIT = limiter(false);
+    const response = await app.request(
+      'http://catalog.example.invalid/v1/steam/applications/1001',
+      undefined,
+      { CATALOG_RATE_LIMIT },
+    );
+    await error(response, 403, 'FORBIDDEN');
+    expect(CATALOG_RATE_LIMIT.limit).not.toHaveBeenCalled();
+  });
+});

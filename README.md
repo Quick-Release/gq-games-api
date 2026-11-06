@@ -9,8 +9,11 @@ by default), complete snapshot submission, publication authorization
 acquisition, and admin inspection/withdrawal/reinstatement on local D1. Issue #6
 adds composed HTTP lifecycle/recovery acceptance, verified in isolated local
 workerd. See the [acceptance matrix](docs/catalog-acceptance.md) for
-reproducible test sections, completed quality commands, and evidence limits. No
-cloud resources have been provisioned or service deployed. `gq-crawl`
+reproducible test sections, completed quality commands, and evidence limits.
+[ADR 0002](docs/adr/0002-first-hosted-deployment.md) approves a first hosted
+deployment of the anonymous consumer read (encrypted state, custom hostname,
+rate limit, source offer, one synthetic verification record); until it is run,
+no cloud resources have been provisioned or service deployed. `gq-crawl`
 integration and real-source approval remain out of scope.
 
 ## Direction
@@ -104,15 +107,17 @@ operation. Real publication still requires express minimal-control retention
 permission and source-field access/storage/redistribution/deletion approval.
 
 Public lookup accepts canonical decimal App IDs from 1 through 4294967295,
-without credentials or a generation. It returns only metadata and public
-provenance (`source_url`, `language`, `observed_at`), using one primary D1 query
-that requires both eligible control and an existing snapshot. Missing and
-withdrawn applications have identical `NOT_FOUND` 404s. All catalog responses,
-including failures, are no-store with server-owned request IDs. Lookup never
-fetches upstream content or promises current availability/freshness. No-store
-does not recall previously read responses or consumer-held copies. A lookup
-whose primary read starts after withdrawal commits cannot serve metadata; an
-earlier read may still finish afterward. Synthetic workerd acceptance covers
+without credentials or a generation. It is rate limited to 100 requests per 60
+seconds per client IP (`429 RATE_LIMITED`); the limit is approximate abuse
+control, not a quota. It returns only metadata and public provenance
+(`source_url`, `language`, `observed_at`), using one primary D1 query that
+requires both eligible control and an existing snapshot. Missing and withdrawn
+applications have identical `NOT_FOUND` 404s. All catalog responses, including
+failures, are no-store with server-owned request IDs. Lookup never fetches
+upstream content or promises current availability/freshness. No-store does not
+recall previously read responses or consumer-held copies. A lookup whose primary
+read starts after withdrawal commits cannot serve metadata; an earlier read may
+still finish afterward. Synthetic workerd acceptance covers
 withdrawal/reinstatement, gated real HTTP commit-order races, delayed captured
 outcomes, uncertain-response recovery, rollback, and restart. The acceptance
 matrix records the completed local run; this does not prove production routing
@@ -124,12 +129,12 @@ routes additionally require distinct opaque Worker secrets
 ambiguous configuration fails closed with 503. Alchemy resolves these via
 redacted Config bindings into Worker secrets. Local Worker state stays in memory
 so Alchemy cannot persist them in plaintext JSON; only credential-free D1
-identity/migration state is persisted, keeping D1 durable. Configured
-publication secrets block non-dev stack operations pending an approved protected
-state/rollout plan. Test credentials are ephemeral; only test factory options
-allow insecure local HTTP. The regular local scaffold/health remain usable
-without secrets. Private responses and errors are no-store with server-owned
-request IDs and sanitized envelopes.
+identity/migration state is persisted, keeping D1 durable. Deployed stages keep
+all state, secrets included, in Alchemy's encrypted Cloudflare state store
+(ADR 0002) and never use the plaintext local adapter. Test credentials are
+ephemeral; only test factory options allow insecure local HTTP. The regular
+local scaffold/health remain usable without secrets. Private responses and
+errors are no-store with server-owned request IDs and sanitized envelopes.
 
 Snapshot submission additionally requires `APPROVED_SNAPSHOT_SOURCES`, a JSON
 array of exact `{source_url, extractor_version}` pairs. Empty, malformed, or
@@ -177,18 +182,27 @@ Examples for Alchemy v1 or Effect 3 are not interchangeable. The Node CLI uses
 `@effect/platform-node`; Bun is not required.
 
 After selecting a Cloudflare account, authenticating Alchemy, and reviewing the
-security/state requirements in [development notes](docs/development.md):
+security/state requirements in [development notes](docs/development.md) and
+[ADR 0002](docs/adr/0002-first-hosted-deployment.md), deploy from a clean
+checkout of the commit being served:
 
 ```sh
 pnpm exec alchemy profile edit --add cloudflare
-pnpm plan --stage dev
-pnpm run deploy --stage dev
+export API_DOMAIN='games-api.your-zone.example' # existing zone in the account
+export SOURCE_REVISION="$(git rev-parse HEAD)"
+pnpm plan --stage production
+pnpm run deploy --stage production
 ```
 
-**Deploy creates a public Workers endpoint and can provision a D1 database.** Do
-not deploy substantive game or write endpoints before access, rate limiting,
-source licensing, and ingestion contracts are settled. No credentials or account
-identifiers are committed.
+**Deploy creates a public Workers endpoint on `API_DOMAIN`, provisions a D1
+database, and on first run bootstraps Alchemy's encrypted state store in the
+account.** Supply ingestion and publication-admin secrets from your own secret
+store in the same shell; never commit them. Write endpoints stay bearer-gated;
+real-source publication still needs source licensing approval. No credentials,
+hostnames, or account identifiers are committed.
+
+`GET /` offers the corresponding source: licence, repository, and the exact
+`SOURCE_REVISION` served (AGPL-3.0 section 13). Forks set `SOURCE_REPOSITORY`.
 
 ## Publication
 

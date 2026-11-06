@@ -15,16 +15,34 @@ import { mountRegistry } from './http/registry';
 import { getHealth } from './services/health';
 import { RequestStopped } from './http/request-lifecycle';
 
+const upstreamRepository = 'https://github.com/Quick-Release/gq-games-api';
+
 export const createApp = (options: CatalogHttpOptions = {}) => {
   const app = new Hono<CatalogHttpEnv>();
 
-  app.get('/', (c) =>
-    c.json({
+  // AGPL-3.0 section 13 offer for the revision actually being served.
+  app.get('/', (c) => {
+    const repository = c.env?.SOURCE_REPOSITORY || upstreamRepository;
+    const revision = c.env?.SOURCE_REVISION;
+    const pinned =
+      typeof revision === 'string' && /^[0-9a-f]{40}$/.test(revision)
+        ? revision
+        : null;
+    return c.json({
       service: 'gq-games-api',
       maturity: 'research',
-      endpoints: { health: '/health' },
-    }),
-  );
+      endpoints: {
+        health: '/health',
+        steam_application: '/v1/steam/applications/{steamAppId}',
+      },
+      source: {
+        license: 'AGPL-3.0-only',
+        repository,
+        revision: pinned,
+        url: pinned ? `${repository}/tree/${pinned}` : repository,
+      },
+    });
+  });
 
   app.get('/health', async (c) => c.json(await Effect.runPromise(getHealth)));
 
