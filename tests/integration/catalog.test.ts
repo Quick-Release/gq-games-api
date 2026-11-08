@@ -937,6 +937,10 @@ it('persists generation-fenced snapshots and publication changes, serves only el
       );
       for (const difference of [
         { source_url: 'https://unapproved.example.invalid/apps/1001' },
+        {
+          source_url:
+            'https://www.wikidata.org/wiki/Special:EntityData/Q279446.json',
+        },
         { extractor_version: 'synthetic-unapproved' },
       ]) {
         await preserve(

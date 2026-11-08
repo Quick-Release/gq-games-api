@@ -50,8 +50,12 @@ unavailable configuration/storage. Do not proceed until the expected 401 is
 observed.
 
 For a dedicated synthetic host with no published record, configure
-`APPROVED_SNAPSHOT_SOURCES` on its server as follows (only this reserved source
-is used; this grants no rights to real content):
+`APPROVED_SNAPSHOT_SOURCES` on its server as follows. Only this reserved source
+is used here, and it grants no rights to real content. A host that also serves
+real records adds one exact tuple per approved record, and only when a recorded
+source-rights policy backs it
+([ADR 0003](adr/0003-rights-backed-real-source-tuples.md)); keep the synthetic
+tuple alongside them while a synthetic verification record stays published:
 
 ```bash
 export APPROVED_SNAPSHOT_SOURCES='[{"source_url":"https://catalog.example.invalid/apps/1001","extractor_version":"synthetic-v1"}]'

@@ -39,7 +39,8 @@ export const apiConfig = {
     REGISTRY_BEARER_TOKEN: Config.Redacted('REGISTRY_BEARER_TOKEN').pipe(
       Config.withDefault(Redacted.make('')),
     ),
-    // Exact synthetic URL/extractor pairs; empty configuration approves nothing.
+    // Exact URL/extractor pairs, each listed individually; empty configuration
+    // approves nothing. Real tuples need a recorded rights policy (ADR 0003).
     // This is an enforcement policy, not source-rights approval.
     APPROVED_SNAPSHOT_SOURCES: Config.String('APPROVED_SNAPSHOT_SOURCES').pipe(
       Config.withDefault(''),

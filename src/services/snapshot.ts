@@ -300,21 +300,26 @@ export type Snapshot = NonNullable<
  * approvedSources must be a JSON STRING encoding an array of these exact pairs:
  * [{"source_url":"https://catalog.example.invalid/apps/1001","extractor_version":"synthetic-v1"}]
  * Every tuple must have exactly these two fields. Missing/malformed policy,
- * unsafe/non-synthetic tuples, and no exact matching tuple fail closed (403).
- * Only example.invalid and its subdomains are permitted. No real source can be
- * approved by this implementation. Strings are preserved and matched exactly;
- * parsing a URL for safety never replaces it with a normalized URL spelling.
+ * any unsafe tuple, and no exact matching tuple fail closed (403).
+ * Any HTTPS host may be listed (ADR 0003), but only as an individual, complete
+ * URL: there are no host, prefix, or pattern wildcards, so the configuration is
+ * the record-level approval list. A real tuple belongs in it only when a
+ * recorded source-rights policy covers it; matching is not rights approval.
+ * Strings are preserved and matched exactly; parsing a URL for safety never
+ * replaces it with a normalized URL spelling.
  */
 export type ApprovedSourcePolicy = Pick<
   Snapshot['provenance'],
   'source_url' | 'extractor_version'
 >[];
 
-const isSyntheticUrl = (value: string) => {
-  // Disallow parser-repaired authorities, credentials, query/fragment markers
-  // (even empty ones), backslashes, whitespace, and ASCII control characters.
+const isSafeSourceUrl = (value: string) => {
+  // Require a literal ASCII LDH authority (so no userinfo, IP-literal brackets,
+  // percent-encoding, IDNA conversion, or other parser repair), and disallow
+  // query/fragment markers (even empty ones), backslashes, whitespace, and
+  // ASCII control characters.
   if (
-    !/^https:\/\/(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)*example\.invalid(?::[0-9]+)?(?:\/|$)/i.test(
+    !/^https:\/\/(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)*[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?::[0-9]+)?(?:\/|$)/i.test(
       value,
     ) ||
     /[?#\\\s]/u.test(value) ||
@@ -332,8 +337,7 @@ const isSyntheticUrl = (value: string) => {
       url.password === '' &&
       url.search === '' &&
       url.hash === '' &&
-      (url.hostname === 'example.invalid' ||
-        url.hostname.endsWith('.example.invalid'))
+      url.hostname !== ''
     );
   } catch {
     return false;
@@ -343,7 +347,7 @@ const isSyntheticUrl = (value: string) => {
 const sourceIsApproved = (snapshot: Snapshot, approvedSources: unknown) => {
   if (
     typeof approvedSources !== 'string' ||
-    !isSyntheticUrl(snapshot.provenance.source_url)
+    !isSafeSourceUrl(snapshot.provenance.source_url)
   )
     return false;
   try {
@@ -359,7 +363,7 @@ const sourceIsApproved = (snapshot: Snapshot, approvedSources: unknown) => {
         !Object.hasOwn(policy, 'extractor_version') ||
         typeof policy.source_url !== 'string' ||
         !isBoundedString(policy.source_url, 2048) ||
-        !isSyntheticUrl(policy.source_url) ||
+        !isSafeSourceUrl(policy.source_url) ||
         !isBoundedString(policy.extractor_version, 128)
       )
         return false;
