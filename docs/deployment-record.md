@@ -60,3 +60,44 @@ The anonymous 200 body:
 
 These checks show the deployed routing, access mode and contract shape. They do
 not show real-source rights, production quotas, or behavior under load.
+
+## 2026-11-08: rights-backed source policy (ADR 0003)
+
+| Item           | Value                                                                                          |
+| -------------- | ---------------------------------------------------------------------------------------------- |
+| Origin         | `https://games-api.bnq.pt` (unchanged)                                                         |
+| Stage          | `production`                                                                                   |
+| Revision       | `4d01f0983498ab6b8ae2ab33f992a43392de8a3f` (merge of PR #17)                                   |
+| Deployment     | `0fc3e5fe-9f7a-41db-b53f-767250cbc43e`, version `f28ff415-8432-4fd3-bf9a-7d2ae0302c26` at 100% |
+| Changes        | `APPROVED_SNAPSHOT_SOURCES` and `SOURCE_REVISION` bindings on `Api` only; D1 and secrets noop  |
+| Access mode    | Anonymous (unchanged)                                                                          |
+| Published data | Unchanged: the synthetic App ID 1001 record only                                               |
+
+`APPROVED_SNAPSHOT_SOURCES` is now the value proposed in ADR 0003: the synthetic
+tuple plus one `wikidata-entity-v1` tuple each for Q279446 (620), Q23013817
+(413150) and Q59756366 (1145360). These come from gq-crawl's Wikidata source
+record (W1–W4, W5a at `8240e61`). This deployment published no real snapshot;
+`gq-crawl` publishes them.
+
+The owner approved the merge, configuration change and redeploy in the
+requesting session. Following ADR 0002, each step (plan, deploy, deployment
+lookup) minted one account-owned Cloudflare token that expired within an hour,
+and revoked it when the step ended. Worker secrets came from Sigillo (GQ Games
+API, `production`) and were never printed. An `alchemy plan` against this
+revision showed only the two binding updates before the deploy ran.
+
+### Verification (2026-11-08, from outside Cloudflare)
+
+| Request                           | Result                                            |
+| --------------------------------- | ------------------------------------------------- |
+| `GET /health`                     | 200                                               |
+| `GET /`                           | 200, `source.revision` = the revision above       |
+| `GET /v1/steam/applications/1001` | 200, the synthetic record, unchanged              |
+| `GET /v1/steam/applications/620`  | 404 `NOT_FOUND` (not yet published by `gq-crawl`) |
+| `GET /v1/steam/applications/1002` | 404 `NOT_FOUND`                                   |
+| `GET /v1/steam/applications/01`   | 400 `INVALID_APP_ID`                              |
+| `GET` over plain HTTP             | 403 `FORBIDDEN`                                   |
+
+These checks show the deployed revision and that existing behavior is unchanged.
+Acceptance of the real tuples is shown by the unit tests in PR #17, not yet by a
+production submission.
