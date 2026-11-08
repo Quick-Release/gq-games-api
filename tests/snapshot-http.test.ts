@@ -1240,7 +1240,7 @@ describe('complete snapshot HTTP boundary (not D1 atomicity evidence)', () => {
     expect(accepted).not.toHaveBeenCalled();
   });
 
-  it('denies missing/malformed/unmatched or non-synthetic source policies and unsafe URLs without accepting data', async () => {
+  it('denies missing/malformed/unmatched source policies and unsafe URLs without accepting data', async () => {
     const { put, env, accepted } = fixture();
     for (const sources of [
       '',
@@ -1292,7 +1292,6 @@ describe('complete snapshot HTTP boundary (not D1 atomicity evidence)', () => {
       'https://user:secret@catalog.example.invalid/apps/1001',
       'https://catalog.example.invalid/apps/1001?token=secret',
       'https://catalog.example.invalid/apps/1001#secret',
-      'https://store.steampowered.com/app/1001',
       'http://catalog.example.invalid/apps/1001',
     ]) {
       const unsafe = { source_url, extractor_version: 'synthetic-v1' };
@@ -1427,12 +1426,16 @@ describe('complete snapshot HTTP boundary (not D1 atomicity evidence)', () => {
     });
   });
 
-  it('rejects parser-repaired, lookalike, and secret-bearing URLs even under matching configured approval', async () => {
+  it('rejects parser-repaired and secret-bearing URLs even under matching configured approval', async () => {
     const { put, env, accepted } = fixture();
     for (const source_url of [
       'https:catalog.example.invalid/apps/1001',
       'https:///catalog.example.invalid/apps/1001',
-      'https://catalog.example.invalid.evil.invalid/apps/1001',
+      'https://user@catalog.example.invalid/apps/1001',
+      'https://[::1]/apps/1001',
+      'https://catalog.example.invalid./apps/1001',
+      'https://catalog%2Eexample.invalid/apps/1001',
+      'https://cätalog.example.invalid/apps/1001',
       'https://catalog.example.invalid/apps/1001?',
       'https://catalog.example.invalid/apps/1001#',
       'https://catalog.example.invalid/apps/1001\\secret',
@@ -1460,6 +1463,196 @@ describe('complete snapshot HTTP boundary (not D1 atomicity evidence)', () => {
       );
     }
     expect(accepted).not.toHaveBeenCalled();
+  });
+
+  describe('real source tuples backed by a recorded rights policy', () => {
+    // gq-crawl docs/research/wikidata-source-records.md W5a (ADR 0003).
+    const synthetic = {
+      source_url: 'https://catalog.example.invalid/apps/1001',
+      extractor_version: 'synthetic-v1',
+    };
+    const wikidata = [
+      [620, 'Q279446'],
+      [413150, 'Q23013817'],
+      [1145360, 'Q59756366'],
+    ].map(([id, qid]) => ({
+      id: String(id),
+      source_url: `https://www.wikidata.org/wiki/Special:EntityData/${qid}.json`,
+      extractor_version: 'wikidata-entity-v1',
+    }));
+    const realPolicy = JSON.stringify([
+      synthetic,
+      ...wikidata.map(({ source_url, extractor_version }) => ({
+        source_url,
+        extractor_version,
+      })),
+    ]);
+    const realSnapshot = (
+      provenance: Partial<Snapshot['provenance']> = {},
+    ) => ({
+      ...snapshot(),
+      metadata: {
+        ...snapshot().metadata,
+        product_type: 'game',
+        base_app_id: null,
+      },
+      provenance: {
+        ...snapshot().provenance,
+        source_url: wikidata[0]!.source_url,
+        extractor_version: 'wikidata-entity-v1',
+        ...provenance,
+      },
+    });
+
+    it('accepts each listed real HTTPS tuple exactly, alongside the synthetic one', async () => {
+      const { put, env, accepted } = fixture();
+      const config = { ...env, APPROVED_SNAPSHOT_SOURCES: realPolicy };
+      for (const { id, source_url } of wikidata) {
+        const response = await put(
+          realSnapshot({ source_url }),
+          {},
+          id,
+          config,
+        );
+        expect(response.status).toBe(200);
+      }
+      expect((await put(snapshot(), {}, '1001', config)).status).toBe(200);
+      expect(
+        accepted.mock.calls.map(([value]) => [
+          value.provenance.source_url,
+          value.provenance.extractor_version,
+        ]),
+      ).toEqual([
+        ...wikidata.map(({ source_url }) => [source_url, 'wikidata-entity-v1']),
+        [synthetic.source_url, synthetic.extractor_version],
+      ]);
+    });
+
+    it('denies unlisted real URLs, other extractors, and unsafe spellings of a listed URL without accepting data', async () => {
+      const { put, env, accepted } = fixture();
+      const config = { ...env, APPROVED_SNAPSHOT_SOURCES: realPolicy };
+      const listed = wikidata[0]!.source_url;
+      for (const provenance of [
+        // Unlisted real URLs, including lookalikes and other spellings.
+        {
+          source_url:
+            'https://www.wikidata.org/wiki/Special:EntityData/Q1.json',
+        },
+        {
+          source_url:
+            'https://wikidata.org/wiki/Special:EntityData/Q279446.json',
+        },
+        {
+          source_url:
+            'https://WWW.wikidata.org/wiki/Special:EntityData/Q279446.json',
+        },
+        {
+          source_url:
+            'https://www.wikidata.org:443/wiki/Special:EntityData/Q279446.json',
+        },
+        {
+          source_url:
+            'https://www.wikidata.org/wiki/Special:EntityData/Q279446',
+        },
+        {
+          source_url:
+            'https://www.wikidata.org.evil.invalid/wiki/Special:EntityData/Q279446.json',
+        },
+        {
+          source_url:
+            'https://www.wikidata.org/wiki/Special:EntityData/Q279446.json/',
+        },
+        {
+          source_url:
+            'https://www.wikidata.org/wiki/Special%3AEntityData/Q279446.json',
+        },
+        { source_url: listed.replace('https:', 'http:') },
+        // A listed URL under a different extractor, or the wrong pairing.
+        { extractor_version: 'wikidata-entity-v2' },
+        { extractor_version: 'synthetic-v1' },
+        { source_url: synthetic.source_url },
+        // A listed URL with a query, fragment, or userinfo.
+        { source_url: `${listed}?flavor=dump` },
+        { source_url: `${listed}?` },
+        { source_url: `${listed}#claims` },
+        { source_url: `${listed}#` },
+        { source_url: listed.replace('https://', 'https://user@') },
+        { source_url: listed.replace('https://', 'https://user:secret@') },
+      ])
+        await error(
+          await put(realSnapshot(provenance), {}, '620', config),
+          403,
+          'SOURCE_NOT_APPROVED',
+        );
+      // Listing an unsafe spelling never approves it, nor the rest of the list.
+      for (const source_url of [
+        `${listed}?flavor=dump`,
+        `${listed}#claims`,
+        listed.replace('https://', 'https://user@'),
+      ]) {
+        const unsafePolicy = JSON.stringify([
+          ...JSON.parse(realPolicy),
+          { source_url, extractor_version: 'wikidata-entity-v1' },
+        ]);
+        const unsafeConfig = {
+          ...env,
+          APPROVED_SNAPSHOT_SOURCES: unsafePolicy,
+        };
+        for (const body of [realSnapshot({ source_url }), realSnapshot()])
+          await error(
+            await put(body, {}, '620', unsafeConfig),
+            403,
+            'SOURCE_NOT_APPROVED',
+          );
+      }
+      // The synthetic-only policy does not admit a real source.
+      await error(
+        await put(realSnapshot(), {}, '620'),
+        403,
+        'SOURCE_NOT_APPROVED',
+      );
+      expect(accepted).not.toHaveBeenCalled();
+    });
+
+    it('treats a listed lookalike host as an exact, individually approved URL, not a pattern', async () => {
+      const { put, env, accepted } = fixture();
+      const source_url =
+        'https://catalog.example.invalid.evil.invalid/apps/1001';
+      const config = {
+        ...env,
+        APPROVED_SNAPSHOT_SOURCES: JSON.stringify([
+          { source_url, extractor_version: 'synthetic-v1' },
+        ]),
+      };
+      for (const other of [
+        'https://catalog.example.invalid.evil.invalid/apps/1002',
+        'https://catalog.example.invalid.evil.invalid/apps/',
+        'https://other.catalog.example.invalid.evil.invalid/apps/1001',
+        'https://catalog.example.invalid/apps/1001',
+      ])
+        await error(
+          await put(
+            {
+              ...snapshot(),
+              provenance: { ...snapshot().provenance, source_url: other },
+            },
+            {},
+            '1001',
+            config,
+          ),
+          403,
+          'SOURCE_NOT_APPROVED',
+        );
+      expect(accepted).not.toHaveBeenCalled();
+      const response = await put(
+        { ...snapshot(), provenance: { ...snapshot().provenance, source_url } },
+        {},
+        '1001',
+        config,
+      );
+      expect(response.status).toBe(200);
+      expect(accepted).toHaveBeenCalledTimes(1);
+    });
   });
 
   it('counts approved Unicode source URLs in code points and preserves their exact spelling', async () => {

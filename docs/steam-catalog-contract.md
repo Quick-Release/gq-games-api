@@ -31,10 +31,10 @@ ratings, followers, rankings, prices, and ownership estimates remain excluded,
 including indirect retention in raw payloads or metadata blobs.
 
 Use the [glossary](../GLOSSARY.md) and
-[Steam research/design note](research/steam-game-schema.md). Initial fixtures
-must be synthetic. Real publication additionally requires approved source-field
+[Steam research/design note](research/steam-game-schema.md). Fixtures must be
+synthetic. Real publication additionally requires approved source-field
 contracts and access, storage, redistribution, attribution, and retention
-rights.
+rights, recorded per source (see the approved-source boundary below).
 
 ## HTTP boundary
 
@@ -184,10 +184,19 @@ approval: each real policy must cover all included fields and their access,
 storage, public redistribution, attribution, retention, and deletion
 obligations.
 
-Use only reserved synthetic sources and synthetic extractor policies in initial
-fixtures. Never fetch a source URL in an HTTP handler. All snapshot fields come
-from one approved observation/source/language; no patches, mixed-source values,
-raw payload retention, or hidden excluded datasets.
+Policy tuples may name any HTTPS URL that passes the URL safety rules (no
+userinfo, query, fragment, backslash, whitespace, control characters, or parser
+repair; at most 2048 code points), but each URL is listed individually and
+matched exactly with its extractor: there are no host, prefix, or pattern
+wildcards. Configure a real tuple only when a recorded source-rights policy
+backs it and approves its records
+([ADR 0003](adr/0003-rights-backed-real-source-tuples.md)). The first is
+gq-crawl's Wikidata source record (W1–W4 for rights, W5a for the approved
+records). Use only reserved synthetic sources and synthetic extractor policies
+in fixtures that stand for catalog content. Never fetch a source URL in an HTTP
+handler. All snapshot fields come from one approved observation/source/language;
+no patches, mixed-source values, raw payload retention, or hidden excluded
+datasets.
 
 ### Equal-time snapshot equality
 

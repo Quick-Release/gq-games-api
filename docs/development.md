@@ -213,11 +213,14 @@ credential setup has been performed.
 
 `APPROVED_SNAPSHOT_SOURCES` is a non-secret Worker Config.String binding with an
 empty deny-all default. Supply a JSON array of exact `source_url` and
-`extractor_version` pairs. Only reserved synthetic HTTPS `example.invalid` URLs
-(and subdomains), without userinfo, query, or fragment, are admitted. No real
-policy approval or upstream fetch is implemented. Policy matching does not
-establish source rights. See [README](../README.md) and
-[the contract](steam-catalog-contract.md).
+`extractor_version` pairs. Any HTTPS URL without userinfo, query, fragment,
+backslash, whitespace, or control characters may be listed, each one
+individually and matched exactly (no wildcards). List a real tuple only when a
+recorded source-rights policy backs it
+([ADR 0003](adr/0003-rights-backed-real-source-tuples.md); the first is
+gq-crawl's Wikidata record, W1–W4 and W5a). Policy matching does not establish
+source rights, and no upstream fetch is implemented. See [README](../README.md)
+and [the contract](steam-catalog-contract.md).
 
 Ignore `.env*`, `.dev.vars*`, `.alchemy/`, `.wrangler/`, logs, and build output.
 Commit only reviewed placeholder examples if secrets become necessary. Public

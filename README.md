@@ -138,12 +138,15 @@ errors are no-store with server-owned request IDs and sanitized envelopes.
 
 Snapshot submission additionally requires `APPROVED_SNAPSHOT_SOURCES`, a JSON
 array of exact `{source_url, extractor_version}` pairs. Empty, malformed, or
-unmatched policy denies submission with `SOURCE_NOT_APPROVED`. This slice admits
-only synthetic HTTPS URLs on `example.invalid` or its subdomains, without
-credentials, query strings, or fragments; it never fetches sources. For example,
-a synthetic policy can pair `https://catalog.example.invalid/apps/1001` with
-`synthetic-v1`. Exact spelling matters. Policy matching is not legal approval.
-Bodies are strict uncompressed UTF-8 JSON, bounded by actual bytes at 32 KiB.
+unmatched policy denies submission with `SOURCE_NOT_APPROVED`. Each tuple names
+one HTTPS URL, without credentials, query strings, or fragments, and the service
+never fetches it. For example, a synthetic policy can pair
+`https://catalog.example.invalid/apps/1001` with `synthetic-v1`. Exact spelling
+matters and there are no wildcards. Real URLs are allowed only when a recorded
+source-rights policy backs them
+([ADR 0003](docs/adr/0003-rights-backed-real-source-tuples.md)); the first is
+gq-crawl's Wikidata record. Policy matching is not legal approval. Bodies are
+strict uncompressed UTF-8 JSON, bounded by actual bytes at 32 KiB.
 
 Health reports only this process, not crawler or storage readiness. Missing
 routes return JSON 404s; unexpected failures return a generic JSON 500.
