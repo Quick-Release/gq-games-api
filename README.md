@@ -11,10 +11,12 @@ adds composed HTTP lifecycle/recovery acceptance, verified in isolated local
 workerd. See the [acceptance matrix](docs/catalog-acceptance.md) for
 reproducible test sections, completed quality commands, and evidence limits. Per
 [ADR 0002](docs/adr/0002-first-hosted-deployment.md), the anonymous consumer
-read is deployed at **<https://games-api.bnq.pt>** (revision `7c5f3ea`), serving
-one synthetic verification record (App ID 1001) and no real game data. See the
-[deployment record](docs/deployment-record.md). `gq-crawl` integration and
-real-source approval remain out of scope.
+read is deployed at **<https://games-api.bnq.pt>** (revision `4d01f09`). It
+serves one synthetic verification record (App ID 1001). Per
+[ADR 0003](docs/adr/0003-rights-backed-real-source-tuples.md), it also admits
+three rights-backed Wikidata records (App IDs 620, 413150, 1145360), which
+`gq-crawl` publishes. None is published yet. See the
+[deployment record](docs/deployment-record.md).
 
 ## Direction
 
