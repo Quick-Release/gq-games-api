@@ -1,0 +1,13 @@
+[
+  {
+    "provider": "synthetic",
+    "source_url": "https://source.example.invalid/artwork/1",
+    "extractor_version": "synthetic-v1",
+    "rights": {
+      "holder": "Synthetic fixture holder",
+      "permission": "Synthetic example only; no rights granted",
+      "attribution": "Synthetic fixture credit"
+    },
+    "delivery_origins": ["https://delivery.example.invalid"]
+  }
+]

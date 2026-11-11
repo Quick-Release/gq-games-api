@@ -13,6 +13,7 @@ import { promisify } from 'node:util';
 import { Schema } from 'effect';
 import { expect, it } from 'vite-plus/test';
 import { verifyHttpLifecycle } from './catalog-lifecycle';
+import { verifyArtworkLifecycle } from './artwork-lifecycle';
 
 const exec = promisify(execFile);
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -479,7 +480,8 @@ it('persists generation-fenced snapshots and publication changes, serves only el
       {
         recursive: true,
         filter: (source) =>
-          !source.includes('20261111120201_artwork_read_scope'),
+          !source.includes('20261111120201_artwork_read_scope') &&
+          !source.includes('20261111120922_artwork_catalog'),
       },
     );
 
@@ -3443,16 +3445,14 @@ it('persists generation-fenced snapshots and publication changes, serves only el
     });
 
     // Upgrade existing records through Alchemy's migration executor only.
-    const scopeMigration = '20261111120201_artwork_read_scope';
     await cp(
-      fileURLToPath(
-        new URL(`../../drizzle/${scopeMigration}`, import.meta.url),
-      ),
-      join(migrations, scopeMigration),
+      fileURLToPath(new URL('../../drizzle/', import.meta.url)),
+      migrations,
       { recursive: true },
     );
     // New workerd/Alchemy process, identical local D1 storage. No reseeding.
     await withWorker(async () => {
+      await verifyArtworkLifecycle({ url, ingestion, admin, registry });
       for (const { keyId, body } of persisted.legacyRecords) {
         const response = await fetch(`${url}/v1/keys/${keyId}`, {
           headers: { Authorization: `Bearer ${registry}` },
@@ -3513,7 +3513,7 @@ it('persists generation-fenced snapshots and publication changes, serves only el
         error: { code: 'PUBLICATION_WITHDRAWN' },
       });
       const audit = await json('/fixture/audit');
-      expect(audit).toMatchObject({ history: [{ count: 5 }] });
+      expect(audit).toMatchObject({ history: [{ count: 6 }] });
     });
     // Restart with the actual Alchemy access-mode binding. No fixture-path
     // rewriting or per-request mode override participates in this sequence.

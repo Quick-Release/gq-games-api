@@ -9,15 +9,15 @@ import {
   mountCatalog,
   mountApiTransport,
   type CatalogHttpEnv,
-  type CatalogHttpOptions,
 } from './http/catalog';
+import { mountArtwork, type ArtworkHttpOptions } from './http/artwork';
 import { mountRegistry } from './http/registry';
 import { getHealth } from './services/health';
 import { RequestStopped } from './http/request-lifecycle';
 
 const upstreamRepository = 'https://github.com/Quick-Release/gq-games-api';
 
-export const createApp = (options: CatalogHttpOptions = {}) => {
+export const createApp = (options: ArtworkHttpOptions = {}) => {
   const app = new Hono<CatalogHttpEnv>();
 
   // AGPL-3.0 section 13 offer for the revision actually being served.
@@ -48,6 +48,7 @@ export const createApp = (options: CatalogHttpOptions = {}) => {
 
   mountApiTransport(app, options);
   mountCatalog(app, options);
+  mountArtwork(app, options);
   mountRegistry(app, options);
 
   app.notFound((c) =>

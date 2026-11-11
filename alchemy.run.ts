@@ -45,6 +45,10 @@ export const apiConfig = {
     APPROVED_SNAPSHOT_SOURCES: Config.String('APPROVED_SNAPSHOT_SOURCES').pipe(
       Config.withDefault(''),
     ),
+    // Separate artwork enforcement policy; blank approves no source.
+    APPROVED_ARTWORK_SOURCES: Config.String('APPROVED_ARTWORK_SOURCES').pipe(
+      Config.withDefault(''),
+    ),
     // Abuse control for the anonymous public read (ADR 0002), per client IP.
     CATALOG_RATE_LIMIT: Cloudflare.RateLimit('CATALOG_RATE_LIMIT', {
       namespaceId: 1001,

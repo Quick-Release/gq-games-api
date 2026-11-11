@@ -1,10 +1,10 @@
 # Artwork API v1 normative contract
 
 This normative contract specifies the approved synthetic boundary of #19–#23.
-Only the registry scope prerequisite is implemented in this change. Asset
-routes, persistence, lifecycle and their acceptance evidence remain
-unimplemented. Existing metadata wire contracts and role credentials continue to
-apply. No real source or delivery origin is approved by this document.
+The registry scopes, asset routes, persistence and publication lifecycle are
+implemented locally with synthetic HTTP/workerd/D1 acceptance. Existing metadata
+wire contracts and role credentials continue to apply. No real source or
+delivery origin is approved by this document; nothing here deploys the service.
 
 All routes require HTTPS, return `Cache-Control: no-store` and server-generated
 `X-Request-ID`; errors use `{error:{code,request_id}}`. JSON bodies use the
@@ -38,7 +38,8 @@ Fields are `revision` (nonblank string, at most 128 characters), `observed_at`
 (nonnegative safe integer seconds), `renditions` (1–16 items), `provenance`,
 `rights`, and `applications` (1–32 unique application authorizations). Each
 rendition strictly contains `id` (identifier), `url` (HTTPS, at most 2048
-characters, no credentials or fragment), `mime` (`image/png`, `image/jpeg`,
+characters, no credentials, query marker, fragment, whitespace, backslash or
+parser-repaired path; literal ASCII host), `mime` (`image/png`, `image/jpeg`,
 `image/webp`, or `image/avif`), `width` and `height` (integers 1–32768).
 Rendition IDs are unique. Provenance strictly contains `source_url` (same URL
 rules) and `extractor_version` (nonblank, at most 128 characters). Rights
@@ -56,6 +57,11 @@ delivery origins; malformed or missing configuration approves nothing. Synthetic
 tests use only reserved example.invalid locations. Approval must separately
 establish access, reuse, embedding, transformations, credit, retention and
 withdrawal.
+
+Removing a configured artwork policy denies new observations but does not
+withdraw previously published content. Use publication administration to
+withdraw an existing asset; configuration matching is not a substitute for that
+action.
 
 An observation replaces the complete rendition and association sets atomically.
 Its timestamp must meet both asset and application generation floors. A newer
@@ -84,16 +90,17 @@ admin responses are reconciled with administrative GET before another command.
 ## Pages, errors and visibility
 
 Limit is canonical decimal 1–100, default 20. Pages sort by provider then asset
-ID in SQLite binary ascending order. Cursor is the last returned pair encoded as
-a URI component of `provider:assetId`; it is exclusive and scoped to the
-requested application. Invalid/unknown query fields, repeated query parameters,
-malformed cursor and invalid bounds yield 422. Pages return
-`{items,next_cursor}`; `next_cursor` is null when exhausted. Current membership
-is queried on every page. There is no snapshot across pages: removals disappear
-and insertions before the cursor require restarting enumeration. Each item
-matches resolution. Unknown/withdrawn/unlinked references yield the same 404
-`NOT_FOUND`; empty application pages are successful, including unknown/withdrawn
-applications.
+ID in SQLite binary ascending order. JSON `next_cursor` is the last returned
+pair as `provider:assetId`; URI-encode it once when supplying the query
+parameter. The cursor is exclusive and applies to the requested application's
+ordering; it is not a snapshot or authorization token. Invalid/unknown query
+fields, repeated query parameters, malformed cursor and invalid bounds
+yield 422. Pages return `{items,next_cursor}`; `next_cursor` is null when
+exhausted. Current membership is queried on every page. There is no snapshot
+across pages: removals disappear and insertions before the cursor require
+restarting enumeration. Each item matches resolution. Unknown/withdrawn/unlinked
+references yield the same 404 `NOT_FOUND`; empty application pages are
+successful, including unknown/withdrawn applications.
 
 Missing, invalid, expired, revoked or insufficient read credentials yield 401
 `UNAUTHORIZED`. Registry unavailability fails closed with 503. Role mismatch

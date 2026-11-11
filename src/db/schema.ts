@@ -3,7 +3,14 @@
 // See LICENSE in the repository root.
 
 import { sql } from 'drizzle-orm';
-import { check, integer, sqliteTable, text } from 'drizzle-orm/sqlite-core';
+import {
+  check,
+  index,
+  integer,
+  primaryKey,
+  sqliteTable,
+  text,
+} from 'drizzle-orm/sqlite-core';
 
 // Absence represents uninitialized control. No source content, reason, expiry,
 // or delivery history belongs in this durable publication fence.
@@ -168,5 +175,76 @@ export const apiKeyRegistry = sqliteTable(
       sql`${table.expiresAt} is null or (typeof(${table.expiresAt}) = 'integer' and ${table.expiresAt} between 0 and 9007199254740991)`,
     ),
     check('registry_revoked', sql`${table.revoked} in (0, 1)`),
+  ],
+);
+
+// Global publication fencing contains no provider content or association history.
+export const artworkPublication = sqliteTable(
+  'artwork_publication',
+  {
+    provider: text('provider').notNull(),
+    assetId: text('asset_id').notNull(),
+    state: text('state', { enum: ['eligible', 'withdrawn'] }).notNull(),
+    generation: text('generation').notNull(),
+    generationIssuedAt: integer('generation_issued_at').notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.provider, table.assetId] }),
+    check(
+      'artwork_provider',
+      sql`length(${table.provider}) between 1 and 128 and ${table.provider} not glob '*[^A-Za-z0-9_-]*'`,
+    ),
+    check(
+      'artwork_asset_id',
+      sql`length(${table.assetId}) between 1 and 128 and ${table.assetId} not glob '*[^A-Za-z0-9_-]*'`,
+    ),
+    check('artwork_state', sql`${table.state} in ('eligible', 'withdrawn')`),
+    check('artwork_generation', sql`length(${table.generation}) > 0`),
+    check(
+      'artwork_issued_at',
+      sql`typeof(${table.generationIssuedAt}) = 'integer' and ${table.generationIssuedAt} >= 0`,
+    ),
+  ],
+);
+
+// Only public, validated content lives here. JSON preserves Unicode spelling.
+export const artworkContent = sqliteTable(
+  'artwork_content',
+  {
+    provider: text('provider').notNull(),
+    assetId: text('asset_id').notNull(),
+    observedAt: integer('observed_at').notNull(),
+    payload: text('payload').notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.provider, table.assetId] }),
+    check(
+      'artwork_content_time',
+      sql`typeof(${table.observedAt}) = 'integer' and ${table.observedAt} >= 0`,
+    ),
+    check('artwork_content_json', sql`json_valid(${table.payload})`),
+  ],
+);
+
+export const artworkAssociation = sqliteTable(
+  'artwork_association',
+  {
+    provider: text('provider').notNull(),
+    assetId: text('asset_id').notNull(),
+    steamAppId: integer('steam_app_id').notNull(),
+    assetGeneration: text('asset_generation').notNull(),
+    applicationGeneration: text('application_generation').notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.provider, table.assetId, table.steamAppId] }),
+    index('artwork_association_application').on(
+      table.steamAppId,
+      table.provider,
+      table.assetId,
+    ),
+    check(
+      'artwork_association_app_id',
+      sql`typeof(${table.steamAppId}) = 'integer' and ${table.steamAppId} between 1 and 4294967295`,
+    ),
   ],
 );

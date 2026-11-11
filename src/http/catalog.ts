@@ -83,7 +83,7 @@ export const catalogError = (
     status,
   );
 
-const requireHttps = (
+export const requireHttps = (
   c: Context<CatalogHttpEnv>,
   options: CatalogHttpOptions,
 ) => {
@@ -95,7 +95,7 @@ const requireHttps = (
   }
 };
 
-const authenticate = (
+export const authenticate = (
   c: Context<CatalogHttpEnv>,
   role: 'ingestion' | 'admin',
   options: CatalogHttpOptions,
@@ -140,7 +140,7 @@ const limitPublicRead = async (c: Context<CatalogHttpEnv>) => {
   if (!outcome.success) return catalogError(c, 429, 'RATE_LIMITED');
 };
 
-const parseAppId = (value: string) =>
+export const parseAppId = (value: string) =>
   /^[1-9][0-9]{0,9}$/.test(value) && Number(value) <= 4294967295
     ? Number(value)
     : undefined;
@@ -159,7 +159,7 @@ const releaseBodyReader = (
   }
 };
 
-const rejectBody = async (c: Context<CatalogHttpEnv>) => {
+export const rejectBody = async (c: Context<CatalogHttpEnv>) => {
   if (Number(c.req.header('Content-Length')) > maximumBodyBytes) {
     return catalogError(c, 413, 'PAYLOAD_TOO_LARGE');
   }
@@ -256,23 +256,12 @@ export const readJsonBody = async (c: Context<CatalogHttpEnv>) => {
   }
 };
 
-const runCatalog = async <A>(
+export const runApi = async <A, R, E>(
   c: Context<CatalogHttpEnv>,
   options: CatalogHttpOptions,
-  operation: Effect.Effect<A, CatalogFailure, Catalog>,
+  operation: Effect.Effect<A, CatalogFailure, R>,
+  layer: Layer.Layer<R, E>,
 ) => {
-  // Construct/provide the production layers per request, never in the bundle's
-  // global scope. Overrides bypass D1 entirely for Node HTTP boundary tests.
-  if (!options.catalogLayer && !c.env?.DB) {
-    return catalogError(c, 503, 'SERVICE_UNAVAILABLE');
-  }
-  const layer =
-    options.catalogLayer ??
-    Catalog.layer.pipe(
-      Layer.provide(
-        Database.layer(c.get('requestLifecycle').database(c.env.DB)),
-      ),
-    );
   const policy = c.req.method === 'GET' ? 'read' : 'mutation';
   const exit = await c
     .get('requestLifecycle')
@@ -307,6 +296,26 @@ const runCatalog = async <A>(
   }
   console.error('Unhandled API error');
   return catalogError(c, 500, 'INTERNAL_SERVER_ERROR');
+};
+
+const runCatalog = async <A>(
+  c: Context<CatalogHttpEnv>,
+  options: CatalogHttpOptions,
+  operation: Effect.Effect<A, CatalogFailure, Catalog>,
+) => {
+  // Construct/provide the production layers per request, never in the bundle's
+  // global scope. Overrides bypass D1 entirely for Node HTTP boundary tests.
+  if (!options.catalogLayer && !c.env?.DB) {
+    return catalogError(c, 503, 'SERVICE_UNAVAILABLE');
+  }
+  const layer =
+    options.catalogLayer ??
+    Catalog.layer.pipe(
+      Layer.provide(
+        Database.layer(c.get('requestLifecycle').database(c.env.DB)),
+      ),
+    );
+  return runApi(c, options, operation, layer);
 };
 
 export const mountApiTransport = (
@@ -348,10 +357,47 @@ export const mountApiTransport = (
       lifecycle.dispose();
     }
   };
-  for (const path of [prefix, publicPrefix, '/v1/keys']) {
+  for (const path of [
+    prefix,
+    publicPrefix,
+    '/v1/keys',
+    '/v1/assets',
+    '/internal/v1/assets',
+  ]) {
     app.use(path, transport);
     app.use(`${path}/*`, transport);
   }
+};
+
+export const requireReadScope = async (
+  c: Context<CatalogHttpEnv>,
+  scope: 'catalog:read' | 'assets:read',
+) => {
+  // Reject malformed credentials before constructing any database layer.
+  const credential = parseApiKey(c.req.header('Authorization'));
+  if (!credential) return catalogError(c, 401, 'UNAUTHORIZED');
+  if (!c.env?.DB) return catalogError(c, 503, 'SERVICE_UNAVAILABLE');
+  const lifecycle = c.get('requestLifecycle');
+  const result = await lifecycle.run(
+    // Capture binding construction defects in the same sanitized failure
+    // path as registry query failures.
+    Effect.suspend(() =>
+      verifyApiKey(credential).pipe(
+        Effect.provide(Database.layer(lifecycle.database(c.env.DB))),
+      ),
+    ),
+    'read',
+    undefined,
+    // Transport owns cleanup while verification and lookup share a signal.
+    { disposeOnExit: false },
+  );
+  if (Exit.isFailure(result)) {
+    if (Cause.hasInterruptsOnly(result.cause) && c.req.raw.signal.aborted)
+      return catalogError(c, 408, 'REQUEST_ABORTED');
+    return catalogError(c, 503, 'SERVICE_UNAVAILABLE');
+  }
+  if (!result.value || !result.value.scopes.includes(scope))
+    return catalogError(c, 401, 'UNAUTHORIZED');
 };
 
 export const mountCatalog = (
@@ -367,31 +413,8 @@ export const mountCatalog = (
     if (mode !== 'anonymous' && mode !== 'protected')
       return catalogError(c, 503, 'SERVICE_UNAVAILABLE');
     if (mode === 'protected') {
-      // Reject malformed credentials before constructing any database layer.
-      const credential = parseApiKey(c.req.header('Authorization'));
-      if (!credential) return catalogError(c, 401, 'UNAUTHORIZED');
-      if (!c.env?.DB) return catalogError(c, 503, 'SERVICE_UNAVAILABLE');
-      const lifecycle = c.get('requestLifecycle');
-      const result = await lifecycle.run(
-        // Capture binding construction defects in the same sanitized failure
-        // path as registry query failures.
-        Effect.suspend(() =>
-          verifyApiKey(credential).pipe(
-            Effect.provide(Database.layer(lifecycle.database(c.env.DB))),
-          ),
-        ),
-        'read',
-        undefined,
-        // Transport owns cleanup while verification and lookup share a signal.
-        { disposeOnExit: false },
-      );
-      if (Exit.isFailure(result)) {
-        if (Cause.hasInterruptsOnly(result.cause) && c.req.raw.signal.aborted)
-          return catalogError(c, 408, 'REQUEST_ABORTED');
-        return catalogError(c, 503, 'SERVICE_UNAVAILABLE');
-      }
-      if (!result.value || !result.value.scopes.includes('catalog:read'))
-        return catalogError(c, 401, 'UNAUTHORIZED');
+      const denied = await requireReadScope(c, 'catalog:read');
+      if (denied) return denied;
     }
     const steamAppId = parseAppId(c.req.param('steamAppId'));
     if (steamAppId === undefined) return catalogError(c, 400, 'INVALID_APP_ID');

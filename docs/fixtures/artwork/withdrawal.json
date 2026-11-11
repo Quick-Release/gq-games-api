@@ -1,0 +1,80 @@
+[
+  {
+    "request": {
+      "method": "PUT",
+      "path": "/internal/v1/assets/synthetic/artwork-1/publication",
+      "headers": {
+        "Authorization": "Bearer SYNTHETIC_PUBLICATION_ADMIN_ROLE",
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "state": "withdrawn",
+        "expected_generation": "SYNTHETIC_ASSET_GENERATION"
+      }
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "Cache-Control": "no-store",
+        "X-Request-ID": "synthetic-request-id"
+      },
+      "body": {
+        "data": {
+          "provider": "synthetic",
+          "asset_id": "artwork-1",
+          "state": "withdrawn",
+          "generation": "SYNTHETIC_WITHDRAWN_GENERATION",
+          "generation_issued_at": 1794398402,
+          "outcome": "applied"
+        }
+      }
+    }
+  },
+  {
+    "request": {
+      "method": "GET",
+      "path": "/internal/v1/assets/synthetic/artwork-1/publication",
+      "headers": {
+        "Authorization": "Bearer SYNTHETIC_PUBLICATION_ADMIN_ROLE"
+      }
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "Cache-Control": "no-store",
+        "X-Request-ID": "synthetic-request-id"
+      },
+      "body": {
+        "data": {
+          "provider": "synthetic",
+          "asset_id": "artwork-1",
+          "state": "withdrawn",
+          "generation": "SYNTHETIC_WITHDRAWN_GENERATION",
+          "generation_issued_at": 1794398402
+        }
+      }
+    }
+  },
+  {
+    "request": {
+      "method": "GET",
+      "path": "/v1/assets/synthetic/artwork-1",
+      "headers": {
+        "Authorization": "Bearer synthetic-reader.1111111111111111111111111111111111111111111111111111111111111111"
+      }
+    },
+    "response": {
+      "status": 404,
+      "headers": {
+        "Cache-Control": "no-store",
+        "X-Request-ID": "synthetic-request-id"
+      },
+      "body": {
+        "error": {
+          "code": "NOT_FOUND",
+          "request_id": "synthetic-request-id"
+        }
+      }
+    }
+  }
+]

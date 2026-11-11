@@ -699,13 +699,31 @@ export default {
   async fetch(request: Request, env: WorkerEnv, ctx: ExecutionContext) {
     const control = await httpGates.control(request);
     if (control) return control;
+    // Code-only failure injection forwards real local SQL errors/rollbacks.
+    // It never exists in the production entry point or environment bindings.
+    const failure = request.headers.get('X-Fixture-DB-Failure');
+    const database =
+      failure === 'read'
+        ? failingReadBinding(env.DB)
+        : failure === 'batch'
+          ? failingBatchBinding(env.DB)
+          : env.DB;
+    const policy = request.headers.get('X-Fixture-Artwork-Policy');
+    const artworkPolicy =
+      policy === 'missing'
+        ? ''
+        : policy === 'malformed'
+          ? '{'
+          : policy === 'partially-invalid'
+            ? `${env.APPROVED_ARTWORK_SOURCES.slice(0, -1)},{}]`
+            : env.APPROVED_ARTWORK_SOURCES;
     // Only this local fixture sees the gate header. The production Hono app,
     // Effect layers, credentials, source policy, and real D1 remain unchanged;
     // replace just the binding for the lifetime of this HTTP invocation.
-    return httpGates.run(request, env.DB, (db) =>
+    return httpGates.run(request, database, (db) =>
       catalogWorker.fetch(
         request,
-        db === env.DB ? env : { ...env, DB: db },
+        { ...env, DB: db, APPROVED_ARTWORK_SOURCES: artworkPolicy },
         ctx,
       ),
     );

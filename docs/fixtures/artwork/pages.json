@@ -1,0 +1,96 @@
+[
+  {
+    "request": {
+      "method": "GET",
+      "path": "/v1/steam/applications/1001/assets?limit=1",
+      "headers": {
+        "Authorization": "Bearer synthetic-reader.1111111111111111111111111111111111111111111111111111111111111111"
+      }
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "Cache-Control": "no-store",
+        "X-Request-ID": "synthetic-request-id"
+      },
+      "body": {
+        "data": {
+          "items": [
+            {
+              "provider": "synthetic",
+              "asset_id": "artwork-1",
+              "revision": "synthetic-revision-1",
+              "observed_at": 1794398401,
+              "renditions": [
+                {
+                  "id": "landscape",
+                  "url": "https://delivery.example.invalid/artwork-1.webp",
+                  "mime": "image/webp",
+                  "width": 1280,
+                  "height": 720
+                }
+              ],
+              "provenance": {
+                "source_url": "https://source.example.invalid/artwork/1",
+                "extractor_version": "synthetic-v1"
+              },
+              "rights": {
+                "holder": "Synthetic fixture holder",
+                "permission": "Synthetic example only; no rights granted",
+                "attribution": "Synthetic fixture credit"
+              }
+            }
+          ],
+          "next_cursor": "synthetic:artwork-1"
+        }
+      }
+    }
+  },
+  {
+    "request": {
+      "method": "GET",
+      "path": "/v1/steam/applications/1001/assets?limit=1&cursor=synthetic%3Aartwork-1",
+      "headers": {
+        "Authorization": "Bearer synthetic-reader.1111111111111111111111111111111111111111111111111111111111111111"
+      }
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "Cache-Control": "no-store",
+        "X-Request-ID": "synthetic-request-id"
+      },
+      "body": {
+        "data": {
+          "items": [
+            {
+              "provider": "synthetic",
+              "asset_id": "artwork-2",
+              "revision": "synthetic-revision-2",
+              "observed_at": 1794398401,
+              "renditions": [
+                {
+                  "id": "landscape",
+                  "url": "https://delivery.example.invalid/artwork-2.webp",
+                  "mime": "image/webp",
+                  "width": 1280,
+                  "height": 720
+                }
+              ],
+              "provenance": {
+                "source_url": "https://source.example.invalid/artwork/2",
+                "extractor_version": "synthetic-v1"
+              },
+              "rights": {
+                "holder": "Synthetic fixture holder",
+                "permission": "Synthetic example only; no rights granted",
+                "attribution": "Synthetic fixture credit"
+              }
+            }
+          ],
+          "next_cursor": null
+        }
+      }
+    }
+  }
+]
