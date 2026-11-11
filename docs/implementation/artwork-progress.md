@@ -7,6 +7,11 @@ and its synthetic fixtures describe the site/producer/delivery owner
 responsibilities. Nothing was deployed, provisioned, or ingested from a real
 artwork source.
 
+The [Muse review assessment](artwork-muse-review.md) records independently
+reproduced follow-up corrections: server-clock validation, edge-whitespace
+alignment, additional scope/rollback coverage, intentional origin semantics and
+a shared database-error classifier.
+
 ## Implemented behavior
 
 - Explicit `assets:read` registry grants, including artwork-only and combined
@@ -83,7 +88,8 @@ clock waits only establish genuinely newer seconds for revision tests.
 - `pnpm format`: passed.
 - `pnpm check`: passed, including types.
 - `pnpm lint`: passed.
-- `pnpm test`: passed, 13 files / 204 Node tests.
+- `pnpm test`: passed, 14 files / 206 Node tests after the Muse review
+  corrections.
 - `pnpm build`: passed, offline Worker build.
 - `pnpm test:integration`: passed, 3 files / 3 tests in local workerd/D1.
 - `pnpm db:check`: passed.

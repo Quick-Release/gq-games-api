@@ -4,36 +4,10 @@
 
 import { Clock, Context, Effect, Layer, Schema } from 'effect';
 import { Database } from '../db/database';
-import { CatalogFailure } from './catalog-failure';
+import { CatalogFailure, databaseFailure } from './catalog-failure';
 import { approveArtwork, validateArtwork } from './artwork-input';
 import { validatePublicationCommand } from './publication';
 
-const temporaryFailures = new Set([
-  'Network connection lost.',
-  'D1 DB reset because its code was updated.',
-  'Internal error while starting up D1 DB storage caused object to be reset.',
-  'Internal error in D1 DB storage caused object to be reset.',
-  'Cannot resolve D1 DB due to transient issue on remote node.',
-  "Can't read from request stream because client disconnected.",
-  'D1 DB storage operation exceeded timeout which caused object to be reset.',
-  'D1 DB is overloaded. Requests queued for too long.',
-  'D1 DB is overloaded. Too many requests queued.',
-  "D1 DB's isolate exceeded its memory limit and was reset.",
-  'D1 DB exceeded its CPU time limit and was reset.',
-]);
-const databaseFailure = (cause: unknown) => {
-  const message =
-    cause instanceof Error
-      ? cause.message
-      : typeof cause === 'string'
-        ? cause
-        : '';
-  return new CatalogFailure({
-    code: temporaryFailures.has(message.replace(/^D1_ERROR: /, ''))
-      ? 'SERVICE_UNAVAILABLE'
-      : 'INTERNAL_SERVER_ERROR',
-  });
-};
 const authorizationRow = Schema.Struct({
   state: Schema.Literals(['eligible', 'withdrawn']),
   generation: Schema.String,

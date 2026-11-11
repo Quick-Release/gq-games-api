@@ -35,6 +35,12 @@ const text = (value: unknown, maximum: number, path: string) => {
     Array.from(value).length > maximum
   )
     return invalid(path);
+  if (value.trim() !== value) {
+    throw new CatalogFailure({
+      code: 'VALIDATION_FAILED',
+      issues: [{ path, code: 'EDGE_WHITESPACE' }],
+    });
+  }
   return value;
 };
 export const isAssetIdentifier = (value: unknown): value is string =>
@@ -198,9 +204,18 @@ const observation = (input: unknown) => {
   };
 };
 export type ArtworkObservation = ReturnType<typeof observation>;
-export const validateArtwork = (input: unknown, _now: number) =>
+export const validateArtwork = (input: unknown, now: number) =>
   Effect.try({
-    try: () => observation(input),
+    try: () => {
+      const decoded = observation(input);
+      if (decoded.observed_at > now + 300) {
+        throw new CatalogFailure({
+          code: 'VALIDATION_FAILED',
+          issues: [{ path: 'observed_at', code: 'TIMESTAMP_IN_FUTURE' }],
+        });
+      }
+      return decoded;
+    },
     catch: (error) =>
       error instanceof CatalogFailure
         ? error

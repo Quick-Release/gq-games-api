@@ -35,28 +35,38 @@ Rendition, revision, URL, or identical bytes do not create or merge identities.
 ## Complete observations
 
 Fields are `revision` (nonblank string, at most 128 characters), `observed_at`
-(nonnegative safe integer seconds), `renditions` (1–16 items), `provenance`,
-`rights`, and `applications` (1–32 unique application authorizations). Each
-rendition strictly contains `id` (identifier), `url` (HTTPS, at most 2048
-characters, no credentials, query marker, fragment, whitespace, backslash or
-parser-repaired path; literal ASCII host), `mime` (`image/png`, `image/jpeg`,
-`image/webp`, or `image/avif`), `width` and `height` (integers 1–32768).
-Rendition IDs are unique. Provenance strictly contains `source_url` (same URL
-rules) and `extractor_version` (nonblank, at most 128 characters). Rights
-strictly contain `holder`, `permission`, and `attribution` (nonblank, at most
-2048 characters each). Applications strictly contain `steam_app_id` and
-`generation` (nonblank, at most 128 characters). Application authorizations are
-acquired through the existing application ingestion authorization route.
+(nonnegative safe integer seconds, at most 300 seconds ahead of the server
+clock), `renditions` (1–16 items), `provenance`, `rights`, and `applications`
+(1–32 unique application authorizations). Each rendition strictly contains `id`
+(identifier), `url` (HTTPS, at most 2048 characters, no credentials, query
+marker, fragment, whitespace, backslash or parser-repaired path; literal ASCII
+host), `mime` (`image/png`, `image/jpeg`, `image/webp`, or `image/avif`),
+`width` and `height` (integers 1–32768). Rendition IDs are unique. Provenance
+strictly contains `source_url` (same URL rules) and `extractor_version`
+(nonblank, at most 128 characters). Rights strictly contain `holder`,
+`permission`, and `attribution` (nonblank, at most 2048 characters each).
+Applications strictly contain `steam_app_id` and `generation` (nonblank, at most
+128 characters). Application authorizations are acquired through the existing
+application ingestion authorization route.
+
+Text limits count Unicode code points. Reject leading/trailing whitespace with
+`EDGE_WHITESPACE` instead of trimming; preserve internal whitespace and Unicode
+spelling. A timestamp beyond the clock tolerance yields 422 `VALIDATION_FAILED`
+with an `observed_at` / `TIMESTAMP_IN_FUTURE` issue, without mutation. This
+keeps a milliseconds/seconds producer error from blocking later honest
+observations.
 
 Artwork source approval is independent of snapshot tuples.
 `APPROVED_ARTWORK_SOURCES` is a JSON array of at most 64 strict objects with
 `provider`, `source_url`, `extractor_version`, `rights` (the exact object
-above), and `delivery_origins` (1–16 distinct HTTPS origins without paths). The
-configured artwork policy must exactly match provider, provenance, rights and
-delivery origins; malformed or missing configuration approves nothing. Synthetic
-tests use only reserved example.invalid locations. Approval must separately
-establish access, reuse, embedding, transformations, credit, retention and
-withdrawal.
+above), and `delivery_origins` (1–16 distinct HTTPS origins without paths).
+Configured provider, provenance and rights match exactly. Delivery locations
+match the URL parser's canonical HTTPS origin (scheme, host and effective port),
+so host case and an explicit default port do not create different origins. The
+configured origin itself must be canonical. Malformed or missing configuration
+approves nothing. Synthetic tests use only reserved example.invalid locations.
+Approval must separately establish access, reuse, embedding, transformations,
+credit, retention and withdrawal.
 
 Removing a configured artwork policy denies new observations but does not
 withdraw previously published content. Use publication administration to

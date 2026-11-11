@@ -306,6 +306,17 @@ export const verifyArtworkLifecycle = async ({
   failure(await resolve('artwork-1'), 401, 'UNAUTHORIZED');
   failure(await enumerate(9101), 401, 'UNAUTHORIZED');
   expect((await register(['assets:read'])).status).toBe(200);
+  const priorKey = (await request(`/v1/keys/${keyId}`, registry)).body;
+  for (const scopes of [
+    ['assets:read', 'assets:read'],
+    ['catalog:read', 'catalog:read'],
+    ['assets:read', 'catalog:read', 'assets:read'],
+  ]) {
+    failure(await register(scopes), 422, 'VALIDATION_FAILED');
+    expect((await request(`/v1/keys/${keyId}`, registry)).body).toEqual(
+      priorKey,
+    );
+  }
   failure(await resolve('unknown'), 404, 'NOT_FOUND');
   const auth = await acquireAsset('artwork-1');
   const a = await acquireApp(9101);
@@ -333,6 +344,21 @@ export const verifyArtworkLifecycle = async ({
     rights: observation.rights,
   };
   expect(data(asset, await resolve('artwork-1'))).toEqual(expectedAsset);
+  for (const observed_at of [
+    Math.floor(Date.now() / 1000) + 3600,
+    Date.now(),
+  ]) {
+    failure(
+      await submit('artwork-1', auth.generation, {
+        ...observation,
+        revision: 'future-observation',
+        observed_at,
+      }),
+      422,
+      'VALIDATION_FAILED',
+    );
+    expect(data(asset, await resolve('artwork-1'))).toEqual(expectedAsset);
+  }
   outcome(await submit('artwork-1', auth.generation, observation), 'unchanged');
   outcome(
     await submit('artwork-1', auth.generation, {
@@ -367,6 +393,11 @@ export const verifyArtworkLifecycle = async ({
     'ignored_stale',
   );
   for (const invalid of [
+    { ...observation, revision: ' padded ' },
+    {
+      ...observation,
+      applications: [{ ...applications[0]!, generation: ' padded ' }],
+    },
     { ...observation, unknown: 'not allowed' },
     { ...observation, renditions: [] },
     {
@@ -504,6 +535,22 @@ export const verifyArtworkLifecycle = async ({
     await change('artwork-1', 'withdrawn', auth.generation, {
       'X-Fixture-DB-Failure': 'batch',
     }),
+    500,
+    'INTERNAL_SERVER_ERROR',
+  );
+  expect(await inspect('artwork-1')).toEqual(currentControl);
+  expect(data(asset, await resolve('artwork-1'))).toEqual(updated);
+  failure(
+    await submit(
+      'artwork-1',
+      auth.generation,
+      {
+        ...newer,
+        revision: 'must-roll-back',
+        observed_at: await after(newer.observed_at),
+      },
+      { 'X-Fixture-DB-Failure': 'batch' },
+    ),
     500,
     'INTERNAL_SERVER_ERROR',
   );
@@ -777,6 +824,25 @@ export const verifyArtworkLifecycle = async ({
     if (capturedBeforeWithdrawal) expect(data(asset, result).asset_id).toBe(id);
     else failure(result, 404, 'NOT_FOUND');
   }
+
+  // Origin equivalence is intentional: preserve the URL spelling but compare
+  // its effective HTTPS origin, unlike exact provenance and rights tuples.
+  const equivalentOrigin = await setup('same-origin');
+  const equivalentUrl = 'https://ARTWORK.example.invalid:443/same-origin.png';
+  outcome(
+    await submit('same-origin', equivalentOrigin.authorization.generation, {
+      ...equivalentOrigin.observation,
+      revision: 'equivalent-origin',
+      observed_at: await after(equivalentOrigin.observation.observed_at),
+      renditions: [
+        { ...equivalentOrigin.observation.renditions[0]!, url: equivalentUrl },
+      ],
+    }),
+    'applied',
+  );
+  expect(data(asset, await resolve('same-origin')).renditions[0]?.url).toBe(
+    equivalentUrl,
+  );
 
   // Paging is a new primary query, not a cached snapshot of former membership.
   const churn = await setup('churn-a');
