@@ -76,3 +76,24 @@ _Avoid_: key database (when implying account data), issuer
 require a verified Principal with `catalog:read`. It is off by default, and
 anonymous lookup remains the default contract. _Avoid_: closed mode, private
 mode
+
+**Artwork Asset**: An independently identified visual work associated with one
+or more Steam Applications. Its identity is distinct from its delivery location
+and from a WordPress attachment. _Avoid_: image URL (when referring to identity)
+
+**Asset Reference**: A provider namespace together with that provider's stable
+Artwork Asset identifier. A reference identifies the asset without asserting
+that its publication is currently permitted. _Avoid_: attachment ID, source URL
+
+**Asset Rendition**: A particular representation of an Artwork Asset, such as an
+approved size or format. Different renditions do not establish different Artwork
+Asset identities. _Avoid_: duplicate asset
+
+**Artwork Association**: An authorized relationship between an Artwork Asset and
+a Steam Application. Ending one association does not withdraw the asset from
+every other application. _Avoid_: asset ownership
+
+**Asset Withdrawal**: An explicit decision to stop publishing an Artwork Asset
+across all its associations. It is distinct from ending an individual Artwork
+Association or withdrawing an application's metadata. _Avoid_: application
+withdrawal (when referring to global artwork publication)
