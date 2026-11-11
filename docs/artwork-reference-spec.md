@@ -5,6 +5,12 @@ Published specification:
 [approved ticket breakdown](research/artwork-ticket-breakdown.md) records the
 four child issues and their native dependencies.
 
+**Implementation:** synthetic local API complete; see the
+[wire contract](artwork-api-contract.md),
+[consumer handoff](artwork-consumer-handoff.md) and
+[HTTP/workerd acceptance evidence](implementation/artwork-progress.md). Real
+artwork and production rollout remain unapproved.
+
 **Approved specification and testing boundary.** Shared understanding, the
 HTTP/workerd/D1 acceptance boundary and the four-ticket breakdown were
 explicitly approved on 2026-11-11. This specification covers a synthetic, local

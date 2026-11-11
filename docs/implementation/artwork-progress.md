@@ -1,73 +1,98 @@
-# Artwork implementation progress
+# Artwork implementation evidence
 
-This is partial implementation evidence for #19 and #20, not completion of
-#20–#23. The normative [wire contract](../artwork-api-contract.md) precedes code
-and SQL changes. No asset route, asset persistence, lifecycle, pagination,
-consumer fixture or race acceptance has been implemented yet.
+Issues #20–#23 are implemented locally with synthetic content. The
+[normative wire contract](../artwork-api-contract.md) was recorded before
+runtime or SQL changes. The [consumer handoff](../artwork-consumer-handoff.md)
+and its synthetic fixtures describe the site/producer/delivery owner
+responsibilities. Nothing was deployed, provisioned, or ingested from a real
+artwork source.
 
-## Completed prerequisite
+## Implemented behavior
 
-Principal, registry HTTP validation and the D1 constraint accept `assets:read`
-independently of `catalog:read`. Empty, metadata-only, artwork-only and combined
-sets are allowed; scopes are unique and canonically sorted. No existing key is
-upgraded automatically. No grant authorizes ingestion or administration.
+- Explicit `assets:read` registry grants, including artwork-only and combined
+  grants. Existing metadata keys retain their original data and permissions.
+- Separate asset publication control, deletable approved content and application
+  associations; generation/floor checks and response classifications share the
+  atomic native Effect D1 batch with mutations.
+- Protected reference resolution and bounded per-application enumeration with
+  primary-query eligibility, no-store, sanitized errors and server request IDs.
+- Complete observation replacement, opaque revisions, identical retries,
+  stale/equal-time conflicts, strict artwork policy and declared renditions.
+- Global content/link purge, application association cleanup in the existing
+  publication transaction, shared-asset behavior and no restoration on
+  reinstatement. Only minimal asset control survives global withdrawal.
 
-Drizzle RC generated `20261111120201_artwork_read_scope`. Before local
-application, SQL review confirmed the replacement table changes only the scope
-constraint and copies key ID, verifier, tenant, scopes, expiry and revocation
-unchanged. No new resource or migration executor was added. Alchemy remains the
-only migration executor.
+## Migrations and local application
 
-## Red and green
+Drizzle generated `20261111120201_artwork_read_scope` to extend only the
+registry scope constraint, copying key
+ID/verifier/tenant/scopes/expiry/revocation unchanged. The local HTTP upgrade
+fixture creates legacy empty and catalog grants under the four historical
+migrations and checks them after Alchemy applies both new migrations. Old grants
+are never widened.
 
-- Installed pinned dependencies with `pnpm install --frozen-lockfile` (success).
-  An earlier test startup failed because this checkout had no node_modules; that
-  startup failure is not behavioral red evidence.
-- `pnpm test:integration tests/integration/catalog.test.ts`: meaningful red,
-  exit 1, 45.64 seconds. An artwork-only registry PUT returned 422 instead of
-  200 at the composed real HTTP/local workerd/D1 boundary.
-- After implementation, the same command passed, exit 0, 43.44 seconds.
-  Artwork-only keys could not read protected catalog metadata; combined keys
-  could. Node doubles were not used for these assertions.
-- Extended the final acceptance run to first apply only the four historical
-  migrations, create legacy empty and catalog grants, then restart with the new
-  migration through Alchemy. It checks public record preservation and successful
-  legacy catalog credential verification, in addition to scope combinations in
-  both input orders. This is local binding evidence only.
+`20261111120922_artwork_catalog` creates three artwork tables and an application
+lookup index. Its reviewed application-publication trigger deletes only the
+changed application's associations when its generation changes or its state is
+withdrawn. The trigger executes in the existing application transaction and
+leaves other links/shared content intact. Generated snapshots describe the
+schema; the trigger is reviewed custom SQL in the same Alchemy-owned migration.
+No other migration executor or cloud resource was introduced.
 
-## Checks
+## Red and green evidence
+
+- The initial delegate's artwork-only registry PUT returned 422 instead of 200.
+  Adding explicit grants and the registry migration made the same real
+  HTTP/workerd test pass. This prerequisite alone did not complete any ticket.
+- The first asset authorization test returned 404 instead of 200 in
+  `tests/integration/artwork-lifecycle.ts`; the targeted catalog integration run
+  failed in 37.73 seconds. The implemented route/service/migration made it pass
+  in 47.12 seconds.
+- The composed consumer flow exposed a cursor encoding defect: the second page
+  returned 422. JSON cursor tokens now contain the raw pair; clients encode once
+  in the query. The contract and fixtures specify that boundary explicitly.
+- The first broader lifecycle run passed in 54.79 seconds. Adding malformed
+  policy rejection, grant revocation and discarded-response reconciliation
+  justified a final full integration run, which passed in 54.16 seconds.
+
+## Acceptance coverage
+
+The existing catalog fixture starts local Alchemy/workerd with isolated D1 and
+no cloud credentials. It invokes `verifyArtworkLifecycle` through HTTP after the
+new migrations; existing metadata migration/restart/atomicity checks remain.
+
+| Behavior                              | Artwork lifecycle evidence                                                                                                                                                   |
+| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Protected reads and unchanged grants  | Artwork-only/catalog-only separation; missing credential, expiry, revoked grants and registry read failure                                                                   |
+| Strict complete approved observations | Unknown/nested fields, empty renditions, duplicate apps, MIME, source, rights and origin rejection; malformed policy denies all                                              |
+| Identity, revisions and retries       | Provider namespace collision isolation, unchanged identity on URL/revision updates, identical/reordered retries, stale/conflicting observations                              |
+| Bounded primary enumeration           | Page boundaries, invalid/repeated query values, unknown apps, removals and insertions before cursor                                                                          |
+| Atomic lifecycle and rollback         | Real later-statement SQL failure preserves content/control; shared A/B withdrawal and last-link loss; no restoration on reinstatement                                        |
+| Concurrent publication                | Explicit HTTP gates drive both commit orders for asset/app withdrawal against updates, acquire against asset withdrawal, and asset/app reinstatement against old submissions |
+| Visibility                            | Gates skip the registry check and hold the actual content read before/after withdrawal; captured responses may finish, newly started reads cannot expose content             |
+| Reconciliation                        | Successful producer/admin replies deliberately discarded; resolution/inspection and unchanged retry reconcile without blindly substituting a generation                      |
+
+Gate timers only bound waits; elapsed time never releases a database operation.
+Both contenders arrive before either batch is released, and responses are held
+until both commit so outcomes cannot be fabricated by a later classification
+read. Observation timestamps use the actual clock after authorization; explicit
+clock waits only establish genuinely newer seconds for revision tests.
+
+## Final checks
 
 - `pnpm format`: passed.
-- `pnpm check`: passed, including typechecking.
+- `pnpm check`: passed, including types.
 - `pnpm lint`: passed.
-- `pnpm test`: passed, 13 files / 204 tests. These are Node tests.
-- `pnpm build`: passed; offline Worker build.
+- `pnpm test`: passed, 13 files / 204 Node tests.
+- `pnpm build`: passed, offline Worker build.
+- `pnpm test:integration`: passed, 3 files / 3 tests in local workerd/D1.
 - `pnpm db:check`: passed.
-- `pnpm db:generate --name consistency_check`: no schema changes, nothing to
-  migrate. No extra migration was created.
+- `pnpm db:generate --name consistency_check`: no schema changes; no extra
+  migration generated.
 - `git diff --check`: passed.
 
-- `pnpm test:integration`: passed, 3 files / 3 tests, 46.06 seconds, including
-  the legacy-row migration upgrade and both combined-grant orders. The preceding
-  full run failed because the new credential-preservation test expected 200 from
-  a nonexistent application (404). Changing that assertion's target to the
-  lifecycle fixture's published application 8001 fixed the test; no production
-  behavior was changed in response.
-
-## Remaining implementation
-
-#20 still needs protected asset publish/resolve/withdraw routes, independently
-approved synthetic sources, strict complete observations and separate
-control/content/associations. #21 needs bounded primary-query enumeration and
-churn acceptance. #22 needs revision ordering/retry behavior, application link
-deletion in the existing atomic withdrawal batch, both-commit-order generation
-races and read visibility evidence. #23 needs the composed lifecycle,
-discarded-response reconciliation, artwork credential failure coverage and the
-consumer fixtures/handoff. Existing catalog regression tests do not establish
-these unimplemented artwork guarantees.
-
-No deployment, cloud bootstrap, real asset ingestion, other-repository change,
-GitHub comment, issue mutation, push or PR occurred. Actual source rights,
-reference/control retention, approved origin operations and deployment remain
-rollout blockers. The site owner retains runtime reference-resolution and any
-optional AMF compatibility work.
+Node tests alone establish no Cloudflare binding guarantees. Local workerd does
+not establish production routing, latency, quotas or operational readiness.
+These checks validate synthetic source policy enforcement, not actual artwork
+rights, origin operations or WPGraphQL/AMF compatibility. Real rollout remains
+blocked on source/retention/delivery approval and explicit deployment authority.

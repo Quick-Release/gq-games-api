@@ -1,7 +1,7 @@
 # ADR 0004: Stable artwork references for remote consumers
 
-- **Status:** Accepted design direction; implementation and source approval
-  pending
+- **Status:** Accepted; synthetic local implementation complete, real source
+  approval pending
 - **Date:** 2026-11-10
 - **Deciders:** repository maintainer, approving the asset discovery
   recommendations

@@ -4,12 +4,15 @@
 and tickets approved and published.** The maintainer approved the discovery
 recommendations, explicitly answered Q1–Q8 below and confirmed the resulting
 shared understanding. Source-specific rights and delivery approval remain
-prerequisites to real-asset rollout. No runtime artwork implementation exists.
-See [ADR 0004](../adr/0004-stable-artwork-references.md).
+prerequisites to real-asset rollout. The synthetic local runtime implementation
+is covered by the [wire contract](../artwork-api-contract.md) and
+[acceptance evidence](../implementation/artwork-progress.md). See
+[ADR 0004](../adr/0004-stable-artwork-references.md).
 
-## Current capability and evidence
+## Historical discovery baseline
 
-Inspected checkout: `e02bc911c95f84e27dac4d3d670cf4c1230dbd53`. The
+The original discovery inspected checkout
+`e02bc911c95f84e27dac4d3d670cf4c1230dbd53`. At that baseline, the
 [snapshot validator](../../src/services/snapshot.ts),
 [database schema](../../src/db/schema.ts) and [HTTP app](../../src/app.ts)
 implement application metadata, publication control and key verification, with
@@ -61,7 +64,7 @@ remains undecided; no new upstream release verification is claimed here.
   explicit handling rather than silently aliasing unrelated assets.
 - **Withdrawal:** withdrawn assets disappear from enumeration and cannot resolve
   to usable metadata. Reinstatement must not restore old authorization silently.
-  Application-withdrawal effects on shared assets need explicit rules.
+  The confirmed shared-association rules below govern application withdrawal.
 
 ## Boundaries requiring detailed agreement
 
