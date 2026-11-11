@@ -12,8 +12,8 @@ export const registryId = /^[A-Za-z0-9_-]{1,128}$/;
 const recordSchema = Schema.Struct({
   verifier: Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/)),
   tenant_id: Schema.String.check(Schema.isPattern(registryId)),
-  scopes: Schema.Array(Schema.Literal('catalog:read')).check(
-    Schema.isMaxLength(1),
+  scopes: Schema.Array(Schema.Literals(['catalog:read', 'assets:read'])).check(
+    Schema.isMaxLength(2),
   ),
   expires_at: Schema.NullOr(
     Schema.Number.check(
@@ -46,11 +46,14 @@ export const manageRegistry = (
           () => new CatalogFailure({ code: 'VALIDATION_FAILED' }),
         ),
       );
+      if (new Set(record.scopes).size !== record.scopes.length) {
+        return yield* new CatalogFailure({ code: 'VALIDATION_FAILED' });
+      }
       const values = {
         keyId,
         verifier: record.verifier,
         tenantId: record.tenant_id,
-        scopes: record.scopes,
+        scopes: [...record.scopes].sort(),
         expiresAt: record.expires_at,
         revoked: record.revoked,
       };

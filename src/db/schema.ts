@@ -141,7 +141,7 @@ export const apiKeyRegistry = sqliteTable(
     verifier: text('verifier').notNull(),
     tenantId: text('tenant_id').notNull(),
     scopes: text('scopes', { mode: 'json' })
-      .$type<readonly 'catalog:read'[]>()
+      .$type<readonly ('catalog:read' | 'assets:read')[]>()
       .notNull(),
     expiresAt: integer('expires_at'),
     revoked: integer('revoked', { mode: 'boolean' }).notNull(),
@@ -161,7 +161,7 @@ export const apiKeyRegistry = sqliteTable(
     ),
     check(
       'registry_scopes',
-      sql`${table.scopes} in ('[]', '["catalog:read"]')`,
+      sql`${table.scopes} in ('[]', '["catalog:read"]', '["assets:read"]', '["assets:read","catalog:read"]')`,
     ),
     check(
       'registry_expiry',

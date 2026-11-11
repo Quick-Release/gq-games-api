@@ -26,11 +26,14 @@ PUT requires exactly `verifier`, `tenant_id`, `scopes`, `expires_at`, and
 `revoked`. Key IDs and tenant IDs contain 1–128 ASCII letters, digits,
 underscores or hyphens. The verifier is a lowercase 64-character hexadecimal
 SHA-256 digest of an issuer-generated 256-bit CSPRNG secret. Submit only the
-digest, never the API Key secret. Scopes are either `[]` or `["catalog:read"]`.
-Expiry is a nonnegative safe integer Unix timestamp in seconds, or null for no
-expiry. Revoked is a boolean. Invalid records return 422; malformed JSON
-returns 400. Bodies are limited to 32 KiB and require application/json. Unknown
-fields, including a secret field, are rejected.
+digest, never the API Key secret. Scopes are a unique subset of `catalog:read`
+and `assets:read`, returned in ASCII ascending order. Empty, metadata-only,
+artwork-only and combined grants are accepted. Existing grants are preserved;
+`assets:read` does not imply `catalog:read` or any management role. Expiry is a
+nonnegative safe integer Unix timestamp in seconds, or null for no expiry.
+Revoked is a boolean. Invalid records return 422; malformed JSON returns 400.
+Bodies are limited to 32 KiB and require application/json. Unknown fields,
+including a secret field, are rejected.
 
 Successful operations return 200 with a `data` object containing `key_id`,
 `tenant_id`, `scopes`, `expires_at`, and `revoked`. The verifier is never

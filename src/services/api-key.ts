@@ -11,7 +11,7 @@ import { registryId } from './registry';
 
 export type Principal = {
   tenant_id: string;
-  scopes: readonly 'catalog:read'[];
+  scopes: readonly ('catalog:read' | 'assets:read')[];
 };
 
 // Parsing is independent of D1 so malformed input never needs a registry read.
