@@ -18,6 +18,17 @@ three rights-backed Wikidata records (App IDs 620, 413150, 1145360), which
 `gq-crawl` publishes. None is published yet. See the
 [deployment record](docs/deployment-record.md).
 
+The local implementation also supports **protected synthetic artwork**: stable
+provider/asset references, per-application enumeration, explicit renditions and
+generation-fenced publication/withdrawal. Both artwork reads require an explicit
+`assets:read` grant; existing metadata grants and anonymous lookup are
+unchanged. See the [artwork contract](docs/artwork-api-contract.md),
+[consumer handoff](docs/artwork-consumer-handoff.md) and
+[local acceptance evidence](docs/implementation/artwork-progress.md). This
+artwork capability is not deployed. No real artwork source or delivery origin is
+approved; site runtime rendering and optional attachment integration remain
+owned by the site repository.
+
 ## Direction
 
 - **Cloudflare Workers + D1**: API runtime and declared relational database. D1

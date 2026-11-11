@@ -13,6 +13,7 @@ import { promisify } from 'node:util';
 import { Schema } from 'effect';
 import { expect, it } from 'vite-plus/test';
 import { verifyHttpLifecycle } from './catalog-lifecycle';
+import { verifyArtworkLifecycle } from './artwork-lifecycle';
 
 const exec = promisify(execFile);
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -478,6 +479,9 @@ it('persists generation-fenced snapshots and publication changes, serves only el
       migrations,
       {
         recursive: true,
+        filter: (source) =>
+          !source.includes('20261111120201_artwork_read_scope') &&
+          !source.includes('20261111120922_artwork_catalog'),
       },
     );
 
@@ -3369,7 +3373,42 @@ it('persists generation-fenced snapshots and publication changes, serves only el
         ],
         history: [{ count: 4 }],
       });
+      const legacyRecords = [];
+      const legacySecret = 'b'.repeat(64);
+      secrets.push(legacySecret);
+      const legacyVerifier = Array.from(
+        new Uint8Array(
+          await crypto.subtle.digest(
+            'SHA-256',
+            new TextEncoder().encode(legacySecret),
+          ),
+        ),
+        (byte) => byte.toString(16).padStart(2, '0'),
+      ).join('');
+      for (const [keyId, scopes, revoked, expiresAt] of [
+        ['legacy-empty', [], true, 123],
+        ['legacy-catalog', ['catalog:read'], false, null],
+      ] as const) {
+        const response = await fetch(`${url}/v1/keys/${keyId}`, {
+          method: 'PUT',
+          headers: {
+            Authorization: `Bearer ${registry}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            verifier: legacyVerifier,
+            tenant_id: 'legacy-tenant',
+            scopes,
+            revoked,
+            expires_at: expiresAt,
+          }),
+        });
+        expect(response.status).toBe(200);
+        legacyRecords.push({ keyId, body: await response.json() });
+      }
       return {
+        legacyRecords,
+        legacySecret,
         lifecycle,
         lifecycleState: await Promise.all(
           lifecycle.ids.map(async (id) => ({
@@ -3405,8 +3444,28 @@ it('persists generation-fenced snapshots and publication changes, serves only el
       };
     });
 
+    // Upgrade existing records through Alchemy's migration executor only.
+    await cp(
+      fileURLToPath(new URL('../../drizzle/', import.meta.url)),
+      migrations,
+      { recursive: true },
+    );
     // New workerd/Alchemy process, identical local D1 storage. No reseeding.
     await withWorker(async () => {
+      await verifyArtworkLifecycle({ url, ingestion, admin, registry });
+      for (const { keyId, body } of persisted.legacyRecords) {
+        const response = await fetch(`${url}/v1/keys/${keyId}`, {
+          headers: { Authorization: `Bearer ${registry}` },
+        });
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual(body);
+      }
+      const legacyRead = await fetch(`${url}/fixture/protected/8001`, {
+        headers: {
+          Authorization: `Bearer legacy-catalog.${persisted.legacySecret}`,
+        },
+      });
+      expect(legacyRead.status).toBe(200);
       const freshRestarted = await lookupHttp(8001);
       expect(freshRestarted.status).toBe(200);
       expect(freshRestarted.body).toEqual(persisted.lifecycle.publicFresh);
@@ -3454,7 +3513,7 @@ it('persists generation-fenced snapshots and publication changes, serves only el
         error: { code: 'PUBLICATION_WITHDRAWN' },
       });
       const audit = await json('/fixture/audit');
-      expect(audit).toMatchObject({ history: [{ count: 4 }] });
+      expect(audit).toMatchObject({ history: [{ count: 6 }] });
     });
     // Restart with the actual Alchemy access-mode binding. No fixture-path
     // rewriting or per-request mode override participates in this sequence.
@@ -3537,6 +3596,29 @@ it('persists generation-fenced snapshots and publication changes, serves only el
           .status,
       ).toBe(200);
       await rejected();
+      // Artwork grants are explicit and must never imply catalog access.
+      for (const scopes of [
+        ['assets:read'],
+        ['catalog:read', 'assets:read'],
+        ['assets:read', 'catalog:read'],
+        ['catalog:read'],
+        [],
+      ]) {
+        const updated = await request(`/v1/keys/${keyId}`, 'PUT', registry, {
+          verifier,
+          tenant_id: 'synthetic-bootstrap',
+          scopes,
+          expires_at: null,
+          revoked: false,
+        });
+        expect(updated.response.status).toBe(200);
+        const inspection = await request(`/v1/keys/${keyId}`, 'GET', registry);
+        expect(inspection.body.data.scopes).toEqual([...scopes].sort());
+        const lookup = await request(path, 'GET', `${keyId}.${secret}`);
+        expect(lookup.response.status).toBe(
+          scopes.includes('catalog:read') ? 200 : 401,
+        );
+      }
     }, 'protected');
     await assertNoCredentialFiles();
   } finally {

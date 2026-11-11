@@ -4,7 +4,8 @@
 
 - `alchemy.run.ts` declares a D1 database and binds it to the Worker as `DB`.
   Alchemy owns the database identity, local emulation, binding, and migration
-  application. No remote database has been provisioned.
+  application. The local workflow provisions no remote resources; hosted
+  deployment history is recorded separately in the deployment record.
 - `src/env.ts` infers the Worker binding types from Alchemy using **type-only**
   imports. Infrastructure values never enter the Worker bundle.
 - `src/db/database.ts` exposes an Effect `Database` service using Drizzle's
@@ -27,6 +28,22 @@
   anonymous lookup, authorization acquisition, publication inspection/change,
   and snapshot submission. Hono supplies Catalog and Database layers per
   request. Health remains process-only.
+- `artwork_publication` stores provider/asset identity, eligibility, generation
+  and issuance time separately from deletable `artwork_content` and
+  `artwork_association` rows. Content contains only the validated public artwork
+  fields, not raw upstream payloads or application authorization generations.
+  Associations carry both current asset and application generations, indexed for
+  per-application enumeration. Global withdrawal purges content and links.
+- The reviewed `artwork_application_publication_fence` SQL trigger deletes only
+  the changed application's links when its generation changes or it is
+  withdrawn, in the existing publication transaction. Other applications can
+  continue to authorize shared artwork. Alchemy applies the generated artwork
+  tables/index and this custom trigger together; Drizzle's generated snapshot
+  describes tables/indexes, while the trigger is maintained in reviewed SQL.
+- The additive registry migration accepts unique canonical subsets of
+  `assets:read` and `catalog:read`, preserving existing key fields and grants.
+  See the artwork contract and implementation evidence for the local HTTP/D1
+  upgrade and publication acceptance.
 
 ORM and Kit are both pinned to **`1.0.0-rc.5-ab785fc`**, the exact optional-peer
 version expected by Alchemy **`2.0.0-beta.81`**. The D1 SQL client is pinned to

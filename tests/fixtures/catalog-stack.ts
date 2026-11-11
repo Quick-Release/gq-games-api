@@ -9,6 +9,7 @@ import { AlchemyContext } from 'alchemy/AlchemyContext';
 import * as Cloudflare from 'alchemy/Cloudflare';
 import { Config, Effect } from 'effect';
 import { apiConfig, publicationState } from '../../alchemy.run.ts';
+import { syntheticArtworkPolicies } from './artwork';
 
 export default Alchemy.Stack(
   'gq-games-api-catalog-test',
@@ -31,6 +32,7 @@ export default Alchemy.Stack(
       env: {
         DB: db,
         CATALOG_ACCESS_MODE: apiConfig.env.CATALOG_ACCESS_MODE,
+        APPROVED_ARTWORK_SOURCES: JSON.stringify(syntheticArtworkPolicies),
         REGISTRY_BEARER_TOKEN: Config.Redacted('REGISTRY_BEARER_TOKEN'),
         APPROVED_SNAPSHOT_SOURCES: JSON.stringify([
           {

@@ -1,0 +1,10 @@
+{
+  "artwork_reference": {
+    "provider": "synthetic",
+    "asset_id": "artwork-1"
+  },
+  "editorial": {
+    "alt": "Editor-written description",
+    "caption": "Editor-written caption"
+  }
+}

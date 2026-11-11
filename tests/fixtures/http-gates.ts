@@ -26,8 +26,9 @@ const wait = async (condition: ReturnType<typeof signal>) => {
   }
 };
 
-const gate = (kind: 'batch' | 'read') => ({
+const gate = (kind: 'batch' | 'read', skip: number) => ({
   kind,
+  skip,
   claims: 0,
   executions: 0,
   arrived: signal(),
@@ -48,7 +49,7 @@ const gatedBinding = (
   const execute = async <T>(operation: () => Promise<T>) => {
     // One matching binding operation per request/key. Subsequent operations
     // remain real, uncoordinated calls (not fabricated or cached results).
-    if (controls.executions++ !== 0) return await operation();
+    if (controls.executions++ !== controls.skip) return await operation();
     controls.arrived.resolve();
     await wait(controls.release);
     try {
@@ -131,7 +132,9 @@ export const createHttpGates = () => {
       if (kind !== 'batch' && kind !== 'read')
         return failure('INVALID_KIND', 400);
       if (gates.has(key)) return failure('GATE_ALREADY_ARMED', 409);
-      gates.set(key, gate(kind));
+      const skip = url.searchParams.get('skip') ?? '0';
+      if (!/^[01]$/.test(skip)) return failure('INVALID_SKIP', 400);
+      gates.set(key, gate(kind, Number(skip)));
       return success();
     }
     const controls = gates.get(key);

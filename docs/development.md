@@ -8,7 +8,11 @@ src/services/health.ts   Process-only health Effect
 src/services/catalog.ts  Lookup/acquisition/publication/snapshot Effect service
 src/services/publication.ts Strict content-free publication command validation
 src/services/snapshot.ts Strict snapshot validation and synthetic source policy
+src/services/artwork.ts  Atomic artwork publication, observations and reads
+src/services/artwork-input.ts Strict artwork validation and independent source policy
+src/services/catalog-failure.ts Shared safe failures and transient D1 classification
 src/http/catalog.ts      Catalog transport, private authentication, and errors
+src/http/artwork.ts      Protected artwork reads and role-separated writes
 src/http/registry.ts     Dedicated registry management HTTP routes
 src/services/api-key.ts  Opaque customer-key parsing and verification
 src/services/registry.ts Registry validation and management Effects
@@ -28,6 +32,7 @@ tests/tooling.test.ts    Tooling configuration regression tests
 tests/database.test.ts   Database service unit tests with a D1 stub
 tests/integration/       Real local workerd catalog + D1/Drizzle tests
   catalog-lifecycle.ts    Composed HTTP acceptance inside catalog.test.ts
+  artwork-lifecycle.ts    Protected artwork lifecycle and real D1 race acceptance
 tests/fixtures/http-gates.ts Local-only real D1 batch/read coordination
 docs/catalog-acceptance.md Parent HTTP/D1 category-to-test matrix
 docs/verification-registry.md Registry records, key format, and access modes
