@@ -15,7 +15,7 @@ SQL and its v1 snapshot are reviewed together before local Alchemy application.
 
 Alchemy owns the `__alchemy_migrations` history. Do not also run Drizzle Kit
 `push` / `migrate`, Wrangler migrations, or request-time migrators against the
-same database. The pinned Drizzle v1 layout is required by Alchemy beta.81; v0
+same database. The pinned Drizzle v1 layout is required by Alchemy beta.86; v0
 `meta/_journal.json` layouts are not supported.
 
 The first two applied migrations have adjacent `migration.sql.license` SPDX
