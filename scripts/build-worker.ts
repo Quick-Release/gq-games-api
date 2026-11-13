@@ -8,11 +8,11 @@ import {
   createArtifactStore,
   makeScopedArtifacts,
 } from 'alchemy/Artifacts';
-import { makeSourceContext, resolveSource } from 'alchemy/Cloudflare';
+import { makeSourceContext, resolveSource } from '@alchemy.run/cloudflare';
 import { Effect, FileSystem } from 'effect';
 import { apiConfig } from '../alchemy.run.ts';
 
-// Alchemy beta.81 has no build-only CLI. Use its exported source-provider API,
+// Alchemy beta.86 has no build-only CLI. Use its exported source-provider API,
 // without evaluating the stack, loading state, or resolving cloud credentials.
 const build = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;

@@ -52,7 +52,7 @@ infrastructure module.
 - `pnpm build` uses Alchemy's exported `resolveSource` / `makeSourceContext` API
   to run the same Worker source provider used for deployment, producing
   `dist/index.js`. It does not evaluate the stack, access state, or deploy. The
-  adapter is needed because beta.81 has no standalone build command; recheck
+  adapter is needed because beta.86 has no standalone build command; recheck
   this API when upgrading Alchemy.
 - After building and stopping dev, `pnpm preview` serves the prebuilt Worker
   through Alchemy/workerd on the same port, without rebundling the source. It
@@ -129,11 +129,11 @@ pnpm overrides align Vite and Vitest with Vite+'s bundled versions. The Vite
 alias reports the Vite+ version, so the targeted peer-version exception is
 intentional. Use `pnpm exec vp toolchain` when upgrading, and update overrides
 with the package. TypeScript 6 is pinned to satisfy Alchemy's transitive tooling
-peers; Vite+ uses its bundled TypeScript Go tooling for checks. The workerd
-override retains the previously used `1.20261006.1` binary: Alchemy beta.81's
-transitive default is too old for compatibility date `2026-10-07`. Keep the
-runtime override compatible with the single date in `alchemy.run.ts`. Native
-build scripts are restricted to esbuild and workerd.
+peers; Vite+ uses its bundled TypeScript Go tooling for checks. There is no
+workerd override: Alchemy beta.86's transitive `workerd@1.20261026.1` supports
+compatibility date `2026-10-07`. If a future Alchemy pin ships a workerd older
+than the single date in `alchemy.run.ts`, add an override rather than moving the
+date. Native build scripts are restricted to esbuild and workerd.
 
 CI runs the local D1 integration fixture, migration checks, and offline build.
 It does not need Cloudflare secrets and never executes Alchemy deployment tasks.

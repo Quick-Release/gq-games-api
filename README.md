@@ -193,9 +193,10 @@ does **not** deploy. Drizzle ORM/Kit are pinned to Alchemy's expected v1 RC; see
 
 ## Deployment is deliberately manual
 
-Alchemy is pinned to **2.0.0-beta.81**, using its v2 API and **Effect 4.0.1**.
-Examples for Alchemy v1 or Effect 3 are not interchangeable. The Node CLI uses
-`@effect/platform-node`; Bun is not required.
+Alchemy is pinned to **2.0.0-beta.86**, with its Cloudflare provider from
+`@alchemy.run/cloudflare` **2.0.0-beta.86**, using its v2 API and **Effect
+4.1.4**. Examples for Alchemy v1 or Effect 3 are not interchangeable. The Node
+CLI uses `@effect/platform-node`; Bun is not required.
 
 After selecting a Cloudflare account, authenticating Alchemy, and reviewing the
 security/state requirements in [development notes](docs/development.md) and

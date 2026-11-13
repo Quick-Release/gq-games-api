@@ -6,7 +6,7 @@ import { resolve } from 'node:path';
 import { fileURLToPath, URL } from 'node:url';
 import * as Alchemy from 'alchemy';
 import { AlchemyContext } from 'alchemy/AlchemyContext';
-import * as Cloudflare from 'alchemy/Cloudflare';
+import * as Cloudflare from '@alchemy.run/cloudflare';
 import { localState } from 'alchemy/State';
 import { Config, Effect } from 'effect';
 import { apiConfig } from '../../alchemy.run.ts';

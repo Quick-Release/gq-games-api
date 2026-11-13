@@ -46,10 +46,12 @@
   upgrade and publication acceptance.
 
 ORM and Kit are both pinned to **`1.0.0-rc.5-ab785fc`**, the exact optional-peer
-version expected by Alchemy **`2.0.0-beta.81`**. The D1 SQL client is pinned to
-**`4.0.1`**, matching Effect. Do not use v0 examples or Effect 3 integration
-packages with this setup. In particular, Alchemy requires the Drizzle v1
-migration directory format, not `meta/_journal.json`.
+version Alchemy declared up to `2.0.0-beta.81`. Alchemy **`2.0.0-beta.86`**
+(with `@alchemy.run/cloudflare`) no longer declares a Drizzle peer and reads the
+same v1 migration directories, so the pin is unchanged. The D1 SQL client is
+pinned to **`4.1.4`**, matching Effect. Do not use v0 examples or Effect 3
+integration packages with this setup. In particular, Alchemy requires the
+Drizzle v1 migration directory format, not `meta/_journal.json`.
 
 ## Query boundary
 
