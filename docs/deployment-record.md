@@ -101,3 +101,57 @@ revision showed only the two binding updates before the deploy ran.
 These checks show the deployed revision and that existing behavior is unchanged.
 Acceptance of the real tuples is shown by the unit tests in PR #17, not yet by a
 production submission.
+
+## 2026-11-13: Alchemy 2.0.0-beta.86 and PR #24 (artwork, publication lifecycle)
+
+| Item           | Value                                                                                          |
+| -------------- | ---------------------------------------------------------------------------------------------- |
+| Origin         | `https://games-api.bnq.pt` (unchanged)                                                         |
+| Stage          | `production`                                                                                   |
+| Revision       | `08b9e709bffeb7637060d9de4dbbeba0ad062e6d` (merge of PR #25)                                   |
+| Deployment     | `bbb26172-a2e7-47ed-bc28-edee3fb592d5`, version `0abc5dfd-b2a6-4c85-8867-4d2518ffa109` at 100% |
+| Toolchain      | Alchemy and `@alchemy.run/cloudflare` 2.0.0-beta.86, Effect 4.1.4                              |
+| Changes        | `Api` update (code, `SOURCE_REVISION`, new `APPROVED_ARTWORK_SOURCES`); `Database` update      |
+| Access mode    | Anonymous (unchanged)                                                                          |
+| Published data | Unchanged by the deploy                                                                        |
+
+The account's shared state store moved to protocol v8 earlier the same day,
+which froze this stack on beta.81. PR #25 moved it to beta.86. The previous
+deployment served `4d01f09` (PR #17), so this deploy also shipped PR #24, whose
+two migrations (`20261111120201_artwork_read_scope`,
+`20261111120922_artwork_catalog`) Alchemy applied to `Database`.
+
+`APPROVED_ARTWORK_SOURCES` is blank, so no artwork source is approved yet. The
+other plain-text bindings kept their live values. A D1 export was taken before
+the deploy and kept outside the repository. The plan was reviewed twice, once at
+the PR head and once at the merge commit. Both times it showed only the two
+updates above: no replace, delete or orphaned resource, every secret a noop, and
+the compatibility date (`2026-10-07`) and flags (`nodejs_compat`,
+`enable_request_signal`, `new_module_registry`) unchanged. Neither run upgraded
+the state store, which was already current.
+
+Following ADR 0002, each step (plan with D1 export, deploy) minted one-hour
+account-owned tokens and revoked them when the step ended. The deploy token held
+Workers Scripts, D1 and Secrets Store write plus Account Settings read on the
+account, and Zone read, DNS write and Workers Routes write on the API's zone
+only. Worker secrets came from Sigillo (GQ Games API, `production`) and were
+never printed.
+
+### Verification (2026-11-13, from outside Cloudflare)
+
+| Request                                                         | Result                                      |
+| --------------------------------------------------------------- | ------------------------------------------- |
+| `GET /health`                                                   | 200                                         |
+| `GET /`                                                         | 200, `source.revision` = the revision above |
+| `GET /v1/steam/applications/1001`                               | 200, `no-store`, `X-Request-ID`, synthetic  |
+| `GET /v1/steam/applications/{620,413150,1145360}`               | 200                                         |
+| `GET /v1/steam/applications/1002`                               | 404                                         |
+| `GET /v1/steam/applications/01`                                 | 400                                         |
+| `GET /v1/steam/applications/1001` over plain HTTP               | 403                                         |
+| `GET /v1/keys/{keyId}` (registry not configured)                | 503                                         |
+| `GET /v1/steam/applications/1001/assets`, no credentials        | 401                                         |
+| `POST /internal/v1/.../ingestion-authorization`, no credentials | 401 (catalog and artwork routes)            |
+
+These checks show the deployed revision and that existing behavior is unchanged.
+They do not exercise artwork publication, which needs an approved artwork
+source.
